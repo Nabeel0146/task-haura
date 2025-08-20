@@ -3,6 +3,24 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+void main() => runApp(const MyApp());
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'My Tasks',
+      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.green),
+      home: const HomePage(),
+    );
+  }
+}
+
+/* =========================================================================
+   HOME PAGE
+   ========================================================================= */
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -66,27 +84,77 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('My Tasks'), centerTitle: true),
       floatingActionButton: FloatingActionButton(
         onPressed: _addTask,
         tooltip: 'Add task',
         child: const Icon(Icons.add),
       ),
-      body: _tasks.isEmpty
-          ? const Center(child: Text('No tasks yet – tap + to add one'))
-          : ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: _tasks.length,
-              itemBuilder: (context, index) {
-                final t = _tasks[index];
-                return Dismissible(
-                  key: ValueKey(t.hashCode),
-                  background: Container(color: Colors.red),
-                  onDismissed: (_) => _deleteTask(index),
-                  child: TaskCard(task: t),
-                );
-              },
+      body: Stack(
+        children: [
+          /* ---------------- gradient ---------------- */
+          Align(
+            alignment: Alignment.topCenter,
+            child: Container(
+              height: MediaQuery.of(context).size.height * 1,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.center,
+                  colors: [
+                    Color(0xFF4CAF50),
+                    Color.fromARGB(255, 255, 255, 255),
+                  ],
+                ),
+              ),
             ),
+          ),
+
+          /* ---------------- content ---------------- */
+          SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                /* title */
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  child: Text(
+                    'My Tasks',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+
+                /* list */
+                Expanded(
+                  child: _tasks.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'No tasks yet – tap + to add one',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          itemCount: _tasks.length,
+                          itemBuilder: (context, index) {
+                            final t = _tasks[index];
+                            return Dismissible(
+                              key: ValueKey(t.hashCode),
+                              background: Container(color: Colors.red),
+                              onDismissed: (_) => _deleteTask(index),
+                              child: TaskCard(task: t),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -183,14 +251,12 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
             children: [
               Text('Add a task', style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 20),
-              /* title */
               TextFormField(
                 controller: _titleCtrl,
                 decoration: const InputDecoration(labelText: 'Title'),
                 validator: (v) => v!.trim().isEmpty ? 'Required' : null,
               ),
               const SizedBox(height: 12),
-              /* description */
               TextFormField(
                 controller: _descCtrl,
                 decoration: const InputDecoration(labelText: 'Description'),
@@ -198,7 +264,6 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                 validator: (v) => v!.trim().isEmpty ? 'Required' : null,
               ),
               const SizedBox(height: 12),
-              /* duration */
               TextFormField(
                 controller: _durationCtrl,
                 decoration: const InputDecoration(
@@ -212,7 +277,6 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                 },
               ),
               const SizedBox(height: 12),
-              /* deadline */
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(DateFormat('EEE, MMM d, yyyy').format(_deadline)),
@@ -220,7 +284,6 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                 onTap: _pickDeadline,
               ),
               const SizedBox(height: 12),
-              /* priority */
               DropdownButtonFormField<Priority>(
                 value: _priority,
                 decoration: const InputDecoration(labelText: 'Priority'),
@@ -233,7 +296,6 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                 onChanged: (v) => setState(() => _priority = v!),
               ),
               const SizedBox(height: 30),
-              /* buttons */
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
