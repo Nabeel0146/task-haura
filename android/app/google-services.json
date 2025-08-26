@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "862203201167",
+    "project_id": "task-haura",
+    "storage_bucket": "task-haura.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:862203201167:android:0af5034c9eb58ada1392fa",
+        "android_client_info": {
+          "package_name": "com.example.taskhaura"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDwA6SJ4ZoBwvrMCj8TSaY6kyChtXAgRUU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
