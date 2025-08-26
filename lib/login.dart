@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:taskhaura/home.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -11,11 +12,11 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
 
-  final _emailCtrl    = TextEditingController();
+  final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
 
   bool _obscurePassword = true;
-  bool _isLoading       = false;
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -33,13 +34,22 @@ class _LoginPageState extends State<LoginPage> {
         email: _emailCtrl.text.trim(),
         password: _passwordCtrl.text.trim(),
       );
+
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/home'); // or push(HomePage())
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+      );
     } on FirebaseAuthException catch (e) {
       String msg = e.message ?? 'Login failed';
-      if (e.code == 'user-not-found')       msg = 'No user found for that email';
-      if (e.code == 'wrong-password')       msg = 'Wrong password';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      if (e.code == 'user-not-found') {
+        msg = 'No user found for that email';
+      } else if (e.code == 'wrong-password') {
+        msg = 'Wrong password';
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg)),
+      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -127,7 +137,7 @@ class _LoginPageState extends State<LoginPage> {
                     const Text('Don’t have an account?'),
                     TextButton(
                       onPressed: () => Navigator.pushReplacementNamed(
-                          context, '/register'), // or push(RegisterPage())
+                          context, '/register'), // adjust if needed
                       child: const Text('Register',
                           style: TextStyle(color: Colors.deepPurple)),
                     ),

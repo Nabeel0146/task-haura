@@ -1,9 +1,14 @@
-import 'dart:convert';
+import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-void main() => runApp(const MyApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();      // ← Firebase init
+  runApp(const MyApp());
+}
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -11,7 +16,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'My Tasks',
+      title: 'Task Haura',
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.green),
       home: const HomePage(),
     );
@@ -30,125 +35,171 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final List<Task> _tasks = [];
-  static const _kStorageKey = 'tasks_v2';
+  final _db = FirebaseFirestore.instance.collection('tasks');
 
-  @override
-  void initState() {
-    super.initState();
-    _loadTasks();
+  /* ---------------- CRUD helpers ---------------- */
+
+  Future<void> _addTask(Task task) async {
+    await _db.add(task.toJson());
   }
 
-  /* ---------------- persistence ---------------- */
-
-  Future<void> _loadTasks() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_kStorageKey) ?? [];
-    _tasks.addAll(raw.map((e) => Task.fromJson(jsonDecode(e))));
-    setState(() {});
+  Future<void> _updateTask(String id, Task task) async {
+    await _db.doc(id).update(task.toJson());
   }
 
-  Future<void> _saveTasks() async {
-    final prefs = await SharedPreferences.getInstance();
-    final encoded = _tasks.map((t) => jsonEncode(t.toJson())).toList();
-    await prefs.setStringList(_kStorageKey, encoded);
+  Future<void> _deleteTask(String id) async {
+    await _db.doc(id).delete();
   }
+  Future<void> _confirmLogout(BuildContext context) async {
+  final shouldLogout = await showDialog<bool>(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('Logout?'),
+      content: const Text('Are you sure you want to logout?'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('CANCEL'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('LOGOUT'),
+        ),
+      ],
+    ),
+  );
 
-  /* ---------------- add task ---------------- */
+  if (shouldLogout ?? false) {
+    // TODO: replace with your real sign-out logic (FirebaseAuth, etc.)
+    // Example:
+    // await FirebaseAuth.instance.signOut();
+    // Navigator.pushReplacementNamed(context, '/login');
+  }
+}
 
-  Future<void> _addTask() async {
+  /* ---------------- bottom-sheet wrappers ---------------- */
+
+  Future<void> _showAddSheet() async {
     final result = await showModalBottomSheet<Task>(
       context: context,
       isScrollControlled: true,
       builder: (_) => const AddTaskSheet(),
     );
-
-    if (result != null) {
-      setState(() => _tasks.add(result));
-      await _saveTasks();
-    }
+    if (result != null) await _addTask(result);
   }
 
-  /* ---------------- delete task ---------------- */
-
-  void _deleteTask(int index) {
-    setState(() => _tasks.removeAt(index));
-    _saveTasks();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Task removed'), duration: Duration(seconds: 1)),
+  Future<void> _showEditSheet(Task task, String id) async {
+    final result = await showModalBottomSheet<Task>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => AddTaskSheet(existingTask: task),
     );
+    if (result != null) await _updateTask(id, result);
   }
 
   /* ---------------- build ---------------- */
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addTask,
-        tooltip: 'Add task',
-        child: const Icon(Icons.add),
-      ),
-      body: Stack(
+@override
+Widget build(BuildContext context) {
+  return Scaffold(
+    appBar: AppBar(
+      title: const Text('Task Haura'),
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.logout, color: Colors.white),
+          tooltip: 'Logout',
+          onPressed: () => _confirmLogout(context),
+        ),
+      ],
+    ),
+    extendBodyBehindAppBar: true, // keeps gradient visible
+    floatingActionButton: FloatingActionButton(
+      onPressed: _showAddSheet,
+      tooltip: 'Add task',
+      child: const Icon(Icons.add),
+    ),
+    body: Stack(
         children: [
-          /* ---------------- gradient ---------------- */
+          /* gradient */
           Align(
             alignment: Alignment.topCenter,
             child: Container(
-              height: MediaQuery.of(context).size.height * 1,
+              height: MediaQuery.of(context).size.height,
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
-                  begin: Alignment.topCenter,
+                  begin: Alignment.topRight,
+                  transform: GradientRotation(6),
                   end: Alignment.center,
                   colors: [
-                    Color.fromARGB(255, 92, 255, 100),
+                    Color.fromARGB(255, 116, 236, 122),
                     Color.fromARGB(255, 255, 255, 255),
                   ],
                 ),
               ),
             ),
           ),
-
-          /* ---------------- content ---------------- */
+          /* content */
           SafeArea(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                /* title */
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(24, 16, 24, 24),
-                  child: Text(
-                    'My Tasks',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
+                /* header + logo */
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+                  child: Row(
+                    children: [
+                      Image.asset('assets/taskhauralogo.png',
+                          width: 36, height: 36),
+                      const SizedBox(width: 12),
+                      const Text(
+                        'Task Haura',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-
-                /* list */
+                /* task list */
                 Expanded(
-                  child: _tasks.isEmpty
-                      ? const Center(
+                  child: StreamBuilder<QuerySnapshot>(
+                    stream: _db.orderBy('deadline').snapshots(),
+                    builder: (context, snap) {
+                      if (snap.hasError) {
+                        return Center(child: Text('${snap.error}'));
+                      }
+                      if (!snap.hasData) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      final docs = snap.data!.docs;
+                      if (docs.isEmpty) {
+                        return const Center(
                           child: Text(
                             'No tasks yet – tap + to add one',
                             style: TextStyle(color: Colors.white70),
                           ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          itemCount: _tasks.length,
-                          itemBuilder: (context, index) {
-                            final t = _tasks[index];
-                            return Dismissible(
-                              key: ValueKey(t.hashCode),
-                              background: Container(color: Colors.red),
-                              onDismissed: (_) => _deleteTask(index),
-                              child: TaskCard(task: t),
-                            );
-                          },
-                        ),
+                        );
+                      }
+                      return ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        itemCount: docs.length,
+                        itemBuilder: (context, index) {
+                          final doc = docs[index];
+                          final task =
+                              Task.fromJson(doc.data() as Map<String, dynamic>);
+                          return TaskCard(
+                            task: task,
+                            onEdit: () => _showEditSheet(task, doc.id),
+                            onDelete: () => _deleteTask(doc.id),
+                          );
+                        },
+                      );
+                    },
+                  ),
                 ),
               ],
             ),
@@ -182,7 +233,7 @@ class Task {
         title: json['title'],
         desc: json['desc'],
         durationMin: json['durationMin'],
-        deadline: DateTime.parse(json['deadline']),
+        deadline: (json['deadline'] as Timestamp).toDate(),
         priority: Priority.values.byName(json['priority']),
       );
 
@@ -190,7 +241,7 @@ class Task {
         'title': title,
         'desc': desc,
         'durationMin': durationMin,
-        'deadline': deadline.toIso8601String(),
+        'deadline': Timestamp.fromDate(deadline),
         'priority': priority.name,
       };
 }
@@ -202,7 +253,8 @@ enum Priority { low, medium, high }
    ========================================================================= */
 
 class AddTaskSheet extends StatefulWidget {
-  const AddTaskSheet({super.key});
+  final Task? existingTask;
+  const AddTaskSheet({super.key, this.existingTask});
 
   @override
   State<AddTaskSheet> createState() => _AddTaskSheetState();
@@ -210,11 +262,23 @@ class AddTaskSheet extends StatefulWidget {
 
 class _AddTaskSheetState extends State<AddTaskSheet> {
   final _formKey = GlobalKey<FormState>();
-  final _titleCtrl = TextEditingController();
-  final _descCtrl = TextEditingController();
-  final _durationCtrl = TextEditingController();
-  DateTime _deadline = DateTime.now().add(const Duration(days: 1));
-  Priority _priority = Priority.medium;
+  late final TextEditingController _titleCtrl;
+  late final TextEditingController _descCtrl;
+  late final TextEditingController _durationCtrl;
+  late DateTime _deadline;
+  late Priority _priority;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleCtrl = TextEditingController(text: widget.existingTask?.title ?? '');
+    _descCtrl = TextEditingController(text: widget.existingTask?.desc ?? '');
+    _durationCtrl = TextEditingController(
+        text: widget.existingTask?.durationMin.toString() ?? '');
+    _deadline = widget.existingTask?.deadline ??
+        DateTime.now().add(const Duration(days: 1));
+    _priority = widget.existingTask?.priority ?? Priority.medium;
+  }
 
   Future<void> _pickDeadline() async {
     final picked = await showDatePicker(
@@ -225,6 +289,8 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
     );
     if (picked != null) setState(() => _deadline = picked);
   }
+
+  
 
   @override
   void dispose() {
@@ -249,7 +315,8 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Add a task', style: Theme.of(context).textTheme.headlineSmall),
+              Text(widget.existingTask == null ? 'Add task' : 'Edit task',
+                  style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 20),
               TextFormField(
                 controller: _titleCtrl,
@@ -271,10 +338,8 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                   suffixText: 'min',
                 ),
                 keyboardType: TextInputType.number,
-                validator: (v) {
-                  if (v == null || int.tryParse(v) == null) return 'Enter a number';
-                  return null;
-                },
+                validator: (v) =>
+                    v == null || int.tryParse(v) == null ? 'Enter a number' : null,
               ),
               const SizedBox(height: 12),
               ListTile(
@@ -290,7 +355,8 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                 items: Priority.values
                     .map((e) => DropdownMenuItem(
                           value: e,
-                          child: Text(e.name[0].toUpperCase() + e.name.substring(1)),
+                          child: Text(
+                              e.name[0].toUpperCase() + e.name.substring(1)),
                         ))
                     .toList(),
                 onChanged: (v) => setState(() => _priority = v!),
@@ -338,7 +404,15 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
 
 class TaskCard extends StatelessWidget {
   final Task task;
-  const TaskCard({super.key, required this.task});
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const TaskCard({
+    super.key,
+    required this.task,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   Color _priorityColor() {
     switch (task.priority) {
@@ -353,57 +427,92 @@ class TaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cardColor = Theme.of(context).colorScheme.surface.withOpacity(.72);
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 5,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: _priorityColor(),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    task.title,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      color: cardColor,
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 92,
+            decoration: BoxDecoration(
+              color: _priorityColor(),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16),
+                bottomLeft: Radius.circular(16),
+              ),
             ),
-            const SizedBox(height: 8),
-            Text(task.desc, style: Theme.of(context).textTheme.bodyMedium),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Icon(Icons.schedule, size: 16, color: Colors.grey[600]),
-                const SizedBox(width: 4),
-                Text('${task.durationMin} min'),
-                const SizedBox(width: 16),
-                Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
-                const SizedBox(width: 4),
-                Text(DateFormat('MMM d').format(task.deadline)),
-                const Spacer(),
-                Chip(
-                  label: Text(
-                    task.priority.name.toUpperCase(),
-                    style: const TextStyle(color: Colors.white, fontSize: 10),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          task.title,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined, size: 18),
+                        onPressed: onEdit,
+                        splashRadius: 20,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        onPressed: onDelete,
+                        splashRadius: 20,
+                      ),
+                    ],
                   ),
-                  backgroundColor: _priorityColor(),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  Text(task.desc,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(Icons.schedule, size: 14, color: Colors.grey[600]),
+                      const SizedBox(width: 4),
+                      Text('${task.durationMin} min',
+                          style: Theme.of(context).textTheme.bodySmall),
+                      const SizedBox(width: 16),
+                      Icon(Icons.calendar_today,
+                          size: 14, color: Colors.grey[600]),
+                      const SizedBox(width: 4),
+                      Text(DateFormat('MMM d').format(task.deadline),
+                          style: Theme.of(context).textTheme.bodySmall),
+                      const Spacer(),
+                      Chip(
+                        label: Text(
+                          task.priority.name.toUpperCase(),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 10),
+                        ),
+                        backgroundColor: _priorityColor(),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
