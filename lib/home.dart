@@ -1,15 +1,13 @@
-// lib/main.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:taskhaura/services/aischeduler.dart';
-// ADD at the top of home.dart
 import 'package:taskhaura/screens/Schpage.dart' show SchedulePage;
 import 'package:taskhaura/register.dart';
 
 /* =========================================================================
-   MAIN
+   MAIN  (unchanged)
    ========================================================================= */
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,16 +32,17 @@ class App extends StatelessWidget {
                 body: Center(child: CircularProgressIndicator()));
           }
           if (snap.hasData) return const HomePage();
-          return const AuthGate(); // simple placeholder
+          return const AuthGate();
         },
       ),
     );
   }
 }
-final db = FirebaseFirestore.instance;   // <-- add this
+
+final db = FirebaseFirestore.instance;
 
 /* =========================================================================
-   AUTH GATE  (placeholder – replace with your real login screen)
+   AUTH GATE  (unchanged)
    ========================================================================= */
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
@@ -65,16 +64,16 @@ class AuthGate extends StatelessWidget {
 }
 
 /* =========================================================================
-   MODEL
+   MODEL  –  NULLABLE DEADLINE
    ========================================================================= */
 enum Priority { low, medium, high }
 
 class Task {
-    final String id;
+  final String id;
   final String title;
   final String desc;
   final int durationMin;
-  final DateTime deadline;          //  <--  NULLABLE
+  final DateTime? deadline; //  <--  NULLABLE
   final Priority priority;
   final String uid;
 
@@ -93,8 +92,7 @@ class Task {
         title: doc.data()?['title'] ?? '',
         desc: doc.data()?['desc'] ?? '',
         durationMin: doc.data()?['durationMin'] ?? 0,
-        deadline:
-            (doc.data()?['deadline'] as Timestamp?)?.toDate() ?? DateTime.now(),
+        deadline: (doc.data()?['deadline'] as Timestamp?)?.toDate(),
         priority: Priority.values.byName(doc.data()?['priority'] ?? 'medium'),
         uid: doc.data()?['uid'] ?? '',
       );
@@ -103,14 +101,14 @@ class Task {
         'title': title,
         'desc': desc,
         'durationMin': durationMin,
-        'deadline': Timestamp.fromDate(deadline),
+        'deadline': deadline == null ? null : Timestamp.fromDate(deadline!),
         'priority': priority.name,
         'uid': uid,
       };
 }
 
 /* =========================================================================
-   HOME PAGE
+   HOME PAGE  –  SAME UI, NO TYPE ERRORS
    ========================================================================= */
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -123,78 +121,74 @@ class _HomePageState extends State<HomePage> {
   final _db = FirebaseFirestore.instance.collection('tasks');
   final _user = FirebaseAuth.instance.currentUser!;
 
-  /* ---------------- CRUD ---------------- */
-  /* ---------------- CREATE ---------------- */
-
+  /* ---------------- AI SCHEDULE ---------------- */
   Future<void> _aiSchedule() async {
-  final snap = await _db.where('uid', isEqualTo: _user.uid).get();
-  final tasks = snap.docs.map(Task.fromDoc).toList();
-  if (tasks.isEmpty) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Add some tasks first')));
-    return;
+    final snap = await _db.where('uid', isEqualTo: _user.uid).get();
+    final tasks = snap.docs.map(Task.fromDoc).toList();
+    if (tasks.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Add some tasks first')));
+      return;
+    }
+    try {
+      final schedId = await AiScheduler.optimiseAndSave(tasks);
+      if (schedId.isEmpty) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('No new tasks to schedule')));
+        return;
+      }
+      print('✅ schedule saved with id: $schedId');
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          title: const Text('Schedule created'),
+          content: const Text('Your AI-generated schedule is ready.'),
+          actions: [
+            TextButton(
+              onPressed: Navigator.of(context).pop,
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      print('❗ AI scheduler error: $e');
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Schedule failed: $e')));
+    }
   }
-  try {
-    final schedId = await AiScheduler.optimiseAndSave(tasks);
-    print('✅ schedule saved with id: $schedId');
-    if (!mounted) return;
-    // --- show success dialog instead of navigating ---
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('Schedule created'),
-        content: const Text('Your AI-generated schedule is ready.'),
-        actions: [
-          TextButton(
-            onPressed: Navigator.of(context).pop,
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  } catch (e) {
-    print('❗ AI scheduler error: $e');
-  }
-}
 
+  /* ---------------- CRUD ---------------- */
   Future<void> _addTask(Task task) async {
     try {
-      await _db.add(task.toJson()); // writes to collection "tasks"
+      await _db.add(task.toJson());
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to add task: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Failed to add task: $e')));
     }
   }
 
   Future<void> _updateTask(String id, Task task) async =>
       _db.doc(id).update(task.toJson());
 
- Future<void> _deleteTask(String id) async {
-  try {
-    // 1. read the document
-    final doc = await _db.doc(id).get();
-    if (!doc.exists) return;
-
-    // 2. copy to deletedTasks with extra timestamp
-    final data = doc.data()!;
-    data['deletedAt'] = FieldValue.serverTimestamp();
-    await db.collection('deletedTasks').add(data);
-
-    // 3. delete from original collection
-    await _db.doc(id).delete();
-
-    print('✅ task $id moved to deletedTasks, HomePage');
-  } catch (e) {
-    print('❗ move+delete failed: $e');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Delete failed: $e')),
-    );
+  Future<void> _deleteTask(String id) async {
+    try {
+      final doc = await _db.doc(id).get();
+      if (!doc.exists) return;
+      final data = doc.data()!..['deletedAt'] = FieldValue.serverTimestamp();
+      await db.collection('deletedTasks').add(data);
+      await _db.doc(id).delete();
+      print('✅ task $id moved to deletedTasks');
+    } catch (e) {
+      print('❗ move+delete failed: $e');
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+    }
   }
-}
-  /* ---------------- logout ---------------- */
 
+  /* ---------------- LOGOUT ---------------- */
   Future<void> _confirmLogout() async {
     final yes = await showDialog<bool>(
       context: context,
@@ -212,20 +206,16 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
-
     if (yes != true) return;
-
-    await FirebaseAuth.instance.signOut(); // 1. sign out
+    await FirebaseAuth.instance.signOut();
     if (!mounted) return;
-
-    // 2. drop the user on the registration screen
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const RegisterPage()),
-      (_) => false, // remove every previous route
+      (_) => false,
     );
   }
 
-  /* ---------------- bottom sheets ---------------- */
+  /* ---------------- BOTTOM SHEETS ---------------- */
   Future<void> _showAddSheet() async {
     final result = await showModalBottomSheet<Task>(
       context: context,
@@ -244,7 +234,7 @@ class _HomePageState extends State<HomePage> {
     if (result != null) await _updateTask(id, result);
   }
 
-  /* ---------------- build ---------------- */
+  /* ---------------- BUILD ---------------- */
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -260,14 +250,8 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      // floatingActionButton: FloatingActionButton(
-      //   onPressed: _showAddSheet,
-      //   tooltip: 'Add task',
-      //   child: const Icon(Icons.add),
-      // ),
       body: Stack(
         children: [
-          /* gradient background */
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -277,7 +261,6 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
-          /* tasks list */
           SafeArea(
             child: Column(
               children: [
@@ -303,10 +286,8 @@ class _HomePageState extends State<HomePage> {
                         .orderBy('deadline')
                         .snapshots(),
                     builder: (_, snap) {
-                      if (snap.hasError)
-                        return Center(child: Text('${snap.error}'));
-                      if (!snap.hasData)
-                        return const Center(child: CircularProgressIndicator());
+                      if (snap.hasError) return Center(child: Text('${snap.error}'));
+                      if (!snap.hasData) return const Center(child: CircularProgressIndicator());
                       final docs = snap.data!.docs;
                       if (docs.isEmpty) {
                         return const Center(
@@ -326,7 +307,7 @@ class _HomePageState extends State<HomePage> {
                             child: TaskCard(
                               task: task,
                               onEdit: () => _showEditSheet(task, docs[i].id),
-                              onDelete: () => _deleteTask(task.id), // NEW
+                              onDelete: () => _deleteTask(task.id),
                             ),
                           );
                         },
@@ -362,7 +343,7 @@ class _HomePageState extends State<HomePage> {
 }
 
 /* =========================================================================
-   BOTTOM SHEET (ADD / EDIT)
+   BOTTOM SHEET  –  NULL-SAFE
    ========================================================================= */
 class TaskBottomSheet extends StatefulWidget {
   final Task? existingTask;
@@ -498,20 +479,17 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
 }
 
 /* =========================================================================
-   TASK CARD
-   ========================================================================= */
-/* =========================================================================
-   TASK CARD  (updated delete button)
+   TASK CARD  –  NULL-SAFE
    ========================================================================= */
 class TaskCard extends StatelessWidget {
   final Task task;
   final VoidCallback onEdit;
-  final VoidCallback onDelete; // NEW
+  final VoidCallback onDelete;
   const TaskCard({
     super.key,
     required this.task,
     required this.onEdit,
-    required this.onDelete, // NEW
+    required this.onDelete,
   });
 
   Color _priorityColor() => task.priority == Priority.high
@@ -543,7 +521,6 @@ class TaskCard extends StatelessWidget {
                   splashRadius: 20,
                 ),
                 IconButton(
-                  // NEW
                   icon: const Icon(Icons.delete_outline,
                       size: 18, color: Colors.red),
                   onPressed: () => _confirmDelete(context),
@@ -562,7 +539,7 @@ class TaskCard extends StatelessWidget {
                 const SizedBox(width: 16),
                 Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
                 const SizedBox(width: 4),
-                Text(DateFormat('MMM d').format(task.deadline)),
+                Text(DateFormat('MMM d').format(task.deadline ?? DateTime.now())),
                 const Spacer(),
                 Chip(
                   label: Text(task.priority.name.toUpperCase(),
@@ -579,7 +556,6 @@ class TaskCard extends StatelessWidget {
     );
   }
 
-  /* quick confirmation before deleting */
   void _confirmDelete(BuildContext ctx) {
     showDialog<bool>(
       context: ctx,
@@ -592,7 +568,7 @@ class TaskCard extends StatelessWidget {
           TextButton(
             onPressed: () {
               Navigator.of(ctx).pop(true);
-              onDelete(); // call the injected callback
+              onDelete();
             },
             child: const Text('DELETE', style: TextStyle(color: Colors.red)),
           ),
