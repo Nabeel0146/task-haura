@@ -1,6 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:taskhaura/home.dart';
+import 'package:taskhaura/register.dart';
+import 'package:taskhaura/screens/mainscreen.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -38,7 +40,7 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const HomePage()),
+        MaterialPageRoute(builder: (_) => const MainScreen()),
       );
     } on FirebaseAuthException catch (e) {
       String msg = e.message ?? 'Login failed';
@@ -136,8 +138,7 @@ class _LoginPageState extends State<LoginPage> {
                   children: [
                     const Text('Don’t have an account?'),
                     TextButton(
-                      onPressed: () => Navigator.pushReplacementNamed(
-                          context, '/register'), // adjust if needed
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context)=> const RegisterPage())),
                       child: const Text('Register',
                           style: TextStyle(color: Colors.deepPurple)),
                     ),
