@@ -17,7 +17,7 @@ class _MainScreenState extends State<MainScreen> {
 
   final List<Widget> _pages = const [
     HomePage(),
-    SchedulePage(),
+    SchedulePage(), // nullable tasks – shows empty state
     Productivitypage(),
     SettingsPage(),
   ];
@@ -29,11 +29,8 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _onItemTapped(int index) {
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
+    _pageController.animateToPage(index,
+        duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
   }
 
   @override
@@ -41,7 +38,7 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       body: PageView(
         controller: _pageController,
-        onPageChanged: (index) => setState(() => _currentIndex = index),
+        onPageChanged: (i) => setState(() => _currentIndex = i),
         children: _pages,
       ),
       bottomNavigationBar: BottomNavigationBar(
@@ -60,3 +57,4 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 }
+

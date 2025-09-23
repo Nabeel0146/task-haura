@@ -40,6 +40,7 @@ class App extends StatelessWidget {
     );
   }
 }
+final db = FirebaseFirestore.instance;   // <-- add this
 
 /* =========================================================================
    AUTH GATE  (placeholder – replace with your real login screen)
@@ -69,11 +70,11 @@ class AuthGate extends StatelessWidget {
 enum Priority { low, medium, high }
 
 class Task {
-  final String id;
+    final String id;
   final String title;
   final String desc;
   final int durationMin;
-  final DateTime deadline;
+  final DateTime deadline;          //  <--  NULLABLE
   final Priority priority;
   final String uid;
 
@@ -125,26 +126,37 @@ class _HomePageState extends State<HomePage> {
   /* ---------------- CRUD ---------------- */
   /* ---------------- CREATE ---------------- */
 
-    Future<void> _aiSchedule() async {
-    final snap = await _db.where('uid', isEqualTo: _user.uid).get();
-    final tasks = snap.docs.map(Task.fromDoc).toList();
-    if (tasks.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Add some tasks first')));
-      return;
-    }
-    try {
-      final ordered = await AiScheduler.optimise(tasks);
-      if (!mounted) return;
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => SchedulePage(tasks: ordered)),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('AI error: $e')));
-    }
+  Future<void> _aiSchedule() async {
+  final snap = await _db.where('uid', isEqualTo: _user.uid).get();
+  final tasks = snap.docs.map(Task.fromDoc).toList();
+  if (tasks.isEmpty) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Add some tasks first')));
+    return;
   }
+  try {
+    final schedId = await AiScheduler.optimiseAndSave(tasks);
+    print('✅ schedule saved with id: $schedId');
+    if (!mounted) return;
+    // --- show success dialog instead of navigating ---
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('Schedule created'),
+        content: const Text('Your AI-generated schedule is ready.'),
+        actions: [
+          TextButton(
+            onPressed: Navigator.of(context).pop,
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  } catch (e) {
+    print('❗ AI scheduler error: $e');
+  }
+}
 
   Future<void> _addTask(Task task) async {
     try {
@@ -159,8 +171,28 @@ class _HomePageState extends State<HomePage> {
   Future<void> _updateTask(String id, Task task) async =>
       _db.doc(id).update(task.toJson());
 
-  Future<void> _deleteTask(String id) async => _db.doc(id).delete();
+ Future<void> _deleteTask(String id) async {
+  try {
+    // 1. read the document
+    final doc = await _db.doc(id).get();
+    if (!doc.exists) return;
 
+    // 2. copy to deletedTasks with extra timestamp
+    final data = doc.data()!;
+    data['deletedAt'] = FieldValue.serverTimestamp();
+    await db.collection('deletedTasks').add(data);
+
+    // 3. delete from original collection
+    await _db.doc(id).delete();
+
+    print('✅ task $id moved to deletedTasks, HomePage');
+  } catch (e) {
+    print('❗ move+delete failed: $e');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Delete failed: $e')),
+    );
+  }
+}
   /* ---------------- logout ---------------- */
 
   Future<void> _confirmLogout() async {
@@ -303,23 +335,23 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
                 Row(
-  mainAxisAlignment: MainAxisAlignment.end,
-  children: [
-    FloatingActionButton(
-      heroTag: 'add',
-      onPressed: _showAddSheet,
-      tooltip: 'Add task',
-      child: const Icon(Icons.add),
-    ),
-    const SizedBox(width: 16),
-    FloatingActionButton(
-      heroTag: 'ai',
-      onPressed: _aiSchedule,
-      tooltip: 'AI schedule',
-      child: const Icon(Icons.auto_fix_high),
-    ),
-  ],
-)
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    FloatingActionButton(
+                      heroTag: 'add',
+                      onPressed: _showAddSheet,
+                      tooltip: 'Add task',
+                      child: const Icon(Icons.add),
+                    ),
+                    const SizedBox(width: 16),
+                    FloatingActionButton(
+                      heroTag: 'ai',
+                      onPressed: _aiSchedule,
+                      tooltip: 'AI schedule',
+                      child: const Icon(Icons.auto_fix_high),
+                    ),
+                  ],
+                )
               ],
             ),
           ),

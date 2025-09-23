@@ -1,60 +1,160 @@
 import 'dart:convert';
 import 'dart:developer' as dev;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_ai/firebase_ai.dart';
-import 'package:flutter/material.dart';
-import '../main.dart';          // gemini instance + navigatorKey
-import '../home.dart';          // Task model
+import 'package:intl/intl.dart';
+import '../main.dart'; // gemini + db
+import '../home.dart'; // Task model
 
 class AiScheduler {
-  /// Calls Gemini and returns the same tasks with AI-chosen start times.
-  static Future<List<Task>> optimise(List<Task> raw) async {
-    final prompt = '''
-You are a time-blocking assistant.
-Working hours: 08:00-18:00. Break 15 min between tasks.
-Return ONLY a JSON array like [{"id":"taskId","start":"HH:mm"}].
+  /* ------------------------------------------------------------------
+   * 1.  Returns the list of time-slots that are **already** blocked
+   *     for the given user on the given calendar day.
+   * ------------------------------------------------------------------ */
+  static Future<List<_BlockedSlot>> _blockedSlots({
+    required String uid,
+    required DateTime day,
+  }) async {
+    final start = DateTime(day.year, day.month, day.day, 8); // 08:00
+    final end = DateTime(day.year, day.month, day.day, 18); // 18:00
 
-Tasks:
-${raw.map((t) => '- ${t.id}|${t.title}|${t.durationMin}min|priority:${t.priority.name}').join('\n')}
-''';
+    final snap = await db
+        .collection('schedules')
+        .where('uid', isEqualTo: uid)
+        .where('scheduleDate', isEqualTo: DateFormat('yyyy-MM-dd').format(day))
+        .orderBy('createdAt', descending: true)
+        .limit(1)
+        .get();
 
-    final resp = await gemini.generateContent([Content.text(prompt)]);
-    final jsonStr = resp.text ?? '[]';
+    if (snap.docs.isEmpty) return [];
 
-    // 1. console proof
-    dev.log('🤖  RAW GEMINI REPLY:\n$jsonStr', name: 'AiScheduler');
-
-    // 2. on-screen proof
-        // 2. on-screen proof
-    if (raw.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        ScaffoldMessenger.of(navigatorKey.currentContext!).showSnackBar(
-          SnackBar(content: Text('AI said: $jsonStr')),
-        );
-      });
-    }
-
-    final List<dynamic> list = jsonDecode(jsonStr);
-    final Map<String, DateTime> starts = {
-      for (final e in list) e['id']: _todayAt(e['start'])
-    };
-
-    return raw.map((t) {
-      final start = starts[t.id] ?? t.deadline;
-      return Task(
-        id: t.id,
-        title: t.title,
-        desc: t.desc,
-        durationMin: t.durationMin,
-        deadline: start,          // we reuse this field for start time
-        priority: t.priority,
-        uid: t.uid,
+    final List<dynamic> ordered = snap.docs.first.data()['orderedTasks'] ?? [];
+    return ordered.map((json) {
+      final date = DateFormat('yyyy-MM-dd').parseUtc(json['date']).toLocal();
+      final startTime = DateFormat('HH:mm').parseUtc(json['start']).toLocal();
+      final realStart = DateTime(
+          date.year, date.month, date.day, startTime.hour, startTime.minute);
+      final duration = json['durationMin'] as int;
+      return _BlockedSlot(
+        start: realStart,
+        end: realStart.add(Duration(minutes: duration + 15)), // +15 min break
       );
     }).toList();
   }
 
-  static DateTime _todayAt(String hhmm) {
-    final p = hhmm.split(':');
-    final n = DateTime.now();
-    return DateTime(n.year, n.month, n.day, int.parse(p[0]), int.parse(p[1]));
+  /* ------------------------------------------------------------------
+   * 2.  Build a prompt that already contains the blocked slots so
+   *     Gemini can **never** overlap them.
+   * ------------------------------------------------------------------ */
+  static Future<String> optimiseAndSave(List<Task> raw) async {
+    final today = DateTime.now();
+    final dateStr = DateFormat('yyyy-MM-dd').format(today);
+    final uid = raw.first.uid;
+
+    final blocked = await _blockedSlots(uid: uid, day: today);
+
+    final buffer = StringBuffer()
+      ..writeln('You are a time-blocking assistant.')
+      ..writeln('Working hours: 08:00-18:00.  Break 15 min between tasks.')
+      ..writeln('Return ONLY a JSON array like:')
+      ..writeln('[{"id":"taskId","start":"HH:mm","date":"$dateStr"}]')
+      ..writeln()
+      ..writeln('Already blocked slots (never use these times):');
+
+    for (final slot in blocked) {
+      buffer.writeln(
+          '- ${DateFormat('HH:mm').format(slot.start)}–${DateFormat('HH:mm').format(slot.end)}');
+    }
+
+    buffer
+      ..writeln()
+      ..writeln('Tasks to schedule (only these):');
+
+    final newTasks = raw.where((t) => t.deadline == null).toList();
+    if (newTasks.isEmpty) {
+      dev.log('🤖  Nothing new to schedule', name: 'AiScheduler');
+      return ''; // caller can ignore
+    }
+
+    for (final t in newTasks) {
+      buffer.writeln(
+          '- ${t.id}|${t.title}|${t.durationMin}min|priority:${t.priority.name}');
+    }
+
+    final prompt = buffer.toString();
+    dev.log('🤖  PROMPT:\n$prompt', name: 'AiScheduler');
+
+    final resp = await gemini.generateContent([Content.text(prompt)]);
+    String jsonStr = (resp.text ?? '[]').trim()
+        .replaceFirst(RegExp(r'^```json\s*'), '')
+        .replaceFirst(RegExp(r'\s*```$'), '');
+    dev.log('🤖  CLEAN GEMINI REPLY:\n$jsonStr', name: 'AiScheduler');
+
+    final List<dynamic> list = jsonDecode(jsonStr);
+
+    /* ----------------------------------------------------------
+     * 3.  Merge newly created slots with existing schedule
+     * ---------------------------------------------------------- */
+    final existingSnap = await db
+        .collection('schedules')
+        .where('uid', isEqualTo: uid)
+        .where('scheduleDate', isEqualTo: dateStr)
+        .orderBy('createdAt', descending: true)
+        .limit(1)
+        .get();
+
+    List<dynamic> merged = [];
+    if (existingSnap.docs.isNotEmpty) {
+      merged = List.from(existingSnap.docs.first.data()['orderedTasks']);
+    }
+
+    for (final item in list) {
+      final start = DateFormat('HH:mm').parseUtc(item['start']).toLocal();
+      final realStart = DateTime(today.year, today.month, today.day,
+          start.hour, start.minute);
+      merged.add({
+        'id': item['id'],
+        'title': newTasks.firstWhere((t) => t.id == item['id']).title,
+        'durationMin': newTasks.firstWhere((t) => t.id == item['id']).durationMin,
+        'start': DateFormat('HH:mm').format(realStart),
+        'date': dateStr,
+        'priority': newTasks.firstWhere((t) => t.id == item['id']).priority.name,
+      });
+    }
+
+    // sort by time
+    merged.sort((a, b) =>
+        DateFormat('HH:mm').parseUtc(a['start']).compareTo(DateFormat('HH:mm').parseUtc(b['start'])));
+
+    /* ----------------------------------------------------------
+     * 4.  Write back (update or create)
+     * ---------------------------------------------------------- */
+    final docId = existingSnap.docs.isEmpty
+        ? (await db.collection('schedules').add({
+            'uid': uid,
+            'scheduleDate': dateStr,
+            'orderedTasks': merged,
+            'createdAt': FieldValue.serverTimestamp(),
+          }))
+            .id
+        : await () {
+            final id = existingSnap.docs.first.id;
+            db.collection('schedules').doc(id).update({
+              'orderedTasks': merged,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+            return id;
+          }();
+
+    return docId;
   }
+}
+
+/* ----------------------------------------------------------
+ * tiny helper
+ * ---------------------------------------------------------- */
+class _BlockedSlot {
+  final DateTime start;
+  final DateTime end;
+  _BlockedSlot({required this.start, required this.end});
 }

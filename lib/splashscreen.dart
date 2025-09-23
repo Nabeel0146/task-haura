@@ -18,19 +18,14 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _routeNext() async {
-    // wait until Firebase auth state is ready
-    final user = FirebaseAuth.instance.currentUser;
-
-    // tiny artificial pause so the splash is visible
-    await Future.delayed(const Duration(milliseconds: 800));
-
+    await Future.delayed(const Duration(milliseconds: 800)); // eye-candy
     if (!mounted) return;
-
-    final route = user == null
-        ? MaterialPageRoute(builder: (_) => const RegisterPage())
-        : MaterialPageRoute(builder: (_) => const MainScreen());
-
-    Navigator.of(context).pushReplacement(route);
+    final user = FirebaseAuth.instance.currentUser;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => user == null ? const RegisterPage() : const MainScreen(),
+      ),
+    );
   }
 
   @override
@@ -43,19 +38,10 @@ class _SplashScreenState extends State<SplashScreen> {
           children: [
             Image.asset('assets/taskhauralogo.png', width: 120, height: 120),
             const SizedBox(height: 10),
-            const Text(
-              'Task Haura',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w600,
-                color: Colors.deepPurple,
-              ),
-            ),
+            const Text('Task Haura',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600, color: Colors.deepPurple)),
             const SizedBox(height: 24),
-            const CircularProgressIndicator(
-              color: Colors.deepPurple,
-              strokeWidth: 3,
-            ),
+            const CircularProgressIndicator(color: Colors.deepPurple, strokeWidth: 3),
           ],
         ),
       ),
