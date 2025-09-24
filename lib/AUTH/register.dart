@@ -1,9 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:taskhaura/home.dart';
+import 'package:taskhaura/AUTH/onsboarding.dart';
 import 'package:taskhaura/login.dart';
-import 'package:taskhaura/screens/mainscreen.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -16,14 +15,14 @@ class _RegisterPageState extends State<RegisterPage> {
   final _formKey = GlobalKey<FormState>();
 
   final _fullNameCtrl = TextEditingController();
-  final _emailCtrl = TextEditingController();
+  final _emailCtrl    = TextEditingController();
   final _passwordCtrl = TextEditingController();
-  final _confirmCtrl = TextEditingController();
+  final _confirmCtrl  = TextEditingController();
 
-  bool _agreedToTerms = false;
-  bool _obscurePassword = true;
-  bool _obscureConfirm = true;
-  bool _isLoading = false;
+  bool _agreedToTerms      = false;
+  bool _obscurePassword    = true;
+  bool _obscureConfirm     = true;
+  bool _isLoading          = false;
 
   @override
   void dispose() {
@@ -46,26 +45,28 @@ class _RegisterPageState extends State<RegisterPage> {
     setState(() => _isLoading = true);
 
     try {
-      final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      final cred =
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: _emailCtrl.text.trim(),
         password: _passwordCtrl.text.trim(),
       );
 
       await cred.user?.updateDisplayName(_fullNameCtrl.text.trim());
 
+      // create minimal user doc – onboarding will fill the rest
       await FirebaseFirestore.instance
           .collection('users')
           .doc(cred.user!.uid)
           .set({
-        'fullName': _fullNameCtrl.text.trim(),
-        'email': _emailCtrl.text.trim(),
-        'createdAt': FieldValue.serverTimestamp(),
+        'fullName'   : _fullNameCtrl.text.trim(),
+        'email'      : _emailCtrl.text.trim(),
+        'createdAt'  : FieldValue.serverTimestamp(),
       });
 
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const MainScreen()),
+        MaterialPageRoute(builder: (_) => OnboardingPage(uid: cred.user!.uid)),
       );
     } on FirebaseAuthException catch (e) {
       String msg = e.message ?? 'Registration failed';

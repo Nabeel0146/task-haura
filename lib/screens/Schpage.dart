@@ -1,3 +1,5 @@
+import 'package:taskhaura/screens/manualtask.dart';
+
 import '../main.dart'; // gemini + db
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -12,6 +14,7 @@ class _ScheduledTask {
   final DateTime start;
   final DateTime date;
   final String priority;
+  final String? reason; // ← NEW
 
   _ScheduledTask.fromJson(Map<String, dynamic> json)
       : id = json['id'],
@@ -19,8 +22,10 @@ class _ScheduledTask {
         durationMin = json['durationMin'],
         start = DateFormat('HH:mm').parseUtc(json['start']).toLocal(),
         date = DateFormat('yyyy-MM-dd').parseUtc(json['date']).toLocal(),
-        priority = json['priority'];
+        priority = json['priority'],
+        reason = json['reason']?.toString(); // ← NEW
 }
+
 
 /* --------------------  PAGE  -------------------- */
 class SchedulePage extends StatefulWidget {
@@ -34,6 +39,7 @@ class _SchedulePageState extends State<SchedulePage>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   late final List<DateTime> _days;
+  
 
   @override
   void initState() {
@@ -165,44 +171,28 @@ Task: "${task.title}" | Priority: ${task.priority} | Scheduled: ${DateFormat('HH
   }
 
   /* ---------------  MANUAL ADD  --------------- */
-  Future<void> _showManualAddSheet(String schedDocId, DateTime forDay) async {
-    final uid = FirebaseAuth.instance.currentUser!.uid;
-    // blocked slots for the chosen day
-    final blocked = await _blockedSlots(uid: uid, day: forDay);
-    final result = await showModalBottomSheet<Map<String, dynamic>>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => _ManualSlotSheet(
-        forDay: forDay,
-        blockedSlots: blocked,
-      ),
-    );
-    if (result == null) return;
+  /* ---------------  MANUAL ADD  --------------- */
+Future<void> _showManualAddSheet(String schedDocId, DateTime forDay) async {
+  final result = await Navigator.of(context).push<Map<String,dynamic>>(
+    MaterialPageRoute(
+      builder: (_) => ManualAddPage(day: forDay),
+    ),
+  );
 
-    // build new slot
-    final startTime = DateFormat('HH:mm').parseUtc(result['start']).toLocal();
-    final realStart = DateTime(forDay.year, forDay.month, forDay.day,
-        startTime.hour, startTime.minute);
-    final newSlot = {
-      'id': FirebaseFirestore.instance.collection('tasks').doc().id,
-      'title': result['title'],
-      'durationMin': result['duration'],
-      'start': DateFormat('HH:mm').format(realStart),
-      'date': DateFormat('yyyy-MM-dd').format(forDay),
-      'priority': result['priority'],
-    };
+  // user pressed BACK ➜ nothing to do
+  if (result == null) return;
 
-    // append to existing schedule
-    final schedRef =
-        FirebaseFirestore.instance.collection('schedules').doc(schedDocId);
-    final currentList =
-        (await schedRef.get()).data()!['orderedTasks'] as List<dynamic>;
-    final updatedList = [...currentList, newSlot]
-      ..sort((a, b) => DateFormat('HH:mm')
-          .parseUtc(a['start'])
-          .compareTo(DateFormat('HH:mm').parseUtc(b['start'])));
-    await schedRef.update({'orderedTasks': updatedList});
-  }
+  // append the new slot to the existing schedule document
+  final schedRef =
+      FirebaseFirestore.instance.collection('schedules').doc(schedDocId);
+  final currentList =
+      (await schedRef.get()).data()!['orderedTasks'] as List<dynamic>;
+  final updatedList = [...currentList, result]
+    ..sort((a, b) => DateFormat('HH:mm')
+        .parseUtc(a['start'])
+        .compareTo(DateFormat('HH:mm').parseUtc(b['start'])));
+  await schedRef.update({'orderedTasks': updatedList});
+}
 
   /* ---------------  FETCH BLOCKED SLOTS  --------------- */
   Future<List<_BlockedSlot>> _blockedSlots({
@@ -253,6 +243,8 @@ Task: "${task.title}" | Priority: ${task.priority} | Scheduled: ${DateFormat('HH
     final start = task.start;
     final end = start.add(Duration(minutes: task.durationMin));
     final slot = '${_12h(start)} – ${_12h(end)}';
+    /* ---------------  REASON ROW  --------------- */
+final reason = task.reason ?? 'Manually Scheduled';
 
     final color = task.priority == 'high'
         ? Colors.redAccent
@@ -266,7 +258,14 @@ Task: "${task.title}" | Priority: ${task.priority} | Scheduled: ${DateFormat('HH
         leading: CircleAvatar(child: Text('${start.hour}')),
         title: Text(task.title,
             style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text(slot),
+       subtitle: Column(
+  crossAxisAlignment: CrossAxisAlignment.start,
+  mainAxisSize: MainAxisSize.min,
+  children: [
+    Text(slot),
+    Text('Reason: $reason', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+  ],
+),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

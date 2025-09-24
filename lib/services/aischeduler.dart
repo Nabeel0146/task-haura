@@ -7,7 +7,9 @@ import '../main.dart'; // gemini + db
 import '../home.dart'; // Task model
 
 class AiScheduler {
-  /* ----------  already blocked slots for a calendar day  ---------- */
+  /* ----------------------------------------------------------
+   * 1.  already blocked slots from existing schedule
+   * ---------------------------------------------------------- */
   static Future<List<_BlockedSlot>> _blockedSlots({
     required String uid,
     required DateTime day,
@@ -36,76 +38,18 @@ class AiScheduler {
     }).toList();
   }
 
-  /* ================================================================
-   *  MAIN ENTRY-POINT
-   *  ---------------------------------------------------------------  
-   *  1.  Builds a prompt that contains TASK TITLE so Gemini can
-   *      reason about *what* the task is (reading, gym, coding …).
-   *  2.  Stores a short human-readable REASON for every placement.
-   * ================================================================ */
+  /* ----------------------------------------------------------
+   * 2.  MAIN ENTRY-POINT
+   *     -  skips already-scheduled tasks (by ID)
+   *     -  sends MIRROR AM/PM times to Gemini
+   *     -  swaps reply back to real clock
+   * ---------------------------------------------------------- */
   static Future<String> optimiseAndSave(List<Task> raw) async {
     final today = DateTime.now();
     final dateStr = DateFormat('yyyy-MM-dd').format(today);
     final uid = raw.first.uid;
 
-    /* ----------  1.  schedule every task  ---------- */
-    final tasksToSchedule = raw;
-    if (tasksToSchedule.isEmpty) {
-      dev.log('🤖  No tasks provided', name: 'AiScheduler');
-      return '';
-    }
-
-    /* ----------  2.  build prompt with blocked slots  ---------- */
-    final blocked = await _blockedSlots(uid: uid, day: today);
-
-    final buffer = StringBuffer()
-      ..writeln('You are an expert productivity coach.')
-      ..writeln('Working hours: 08:00-18:00.  15 min break between tasks.')
-      ..writeln('')
-      ..writeln('Already blocked slots (never overlap):');
-    for (final s in blocked) {
-      buffer.writeln(
-          '- ${DateFormat('HH:mm').format(s.start)}–${DateFormat('HH:mm').format(s.end)}');
-    }
-    buffer
-      ..writeln('')
-      ..writeln('Tasks to schedule:');
-    for (final t in tasksToSchedule) {
-      buffer.writeln(
-          '- ID:${t.id}|TITLE:${t.title}|DURATION:${t.durationMin}min|PRIORITY:${t.priority.name}');
-    }
-    buffer
-      ..writeln('')
-      ..writeln('Return **ONLY** a JSON array like:')
-      ..writeln('[{"id":"taskId","start":"HH:mm","date":"$dateStr","reason":"short reason"}]')
-      ..writeln('')
-      ..writeln('Pick times that suit the *type* of task (reading → morning/evening, meetings → mid-day, gym → afternoon, etc.).');
-
-    /* ----------  3.  call Gemini for times  ---------- */
-    final resp = await gemini.generateContent([Content.text(buffer.toString())]);
-    String jsonStr = (resp.text ?? '[]').trim()
-        .replaceFirst(RegExp(r'^```json\s*'), '')
-        .replaceFirst(RegExp(r'\s*```$'), '');
-    dev.log('🤖  GEMINI TIME REPLY:\n$jsonStr', name: 'AiScheduler');
-    final List<dynamic> timeList = jsonDecode(jsonStr);
-
-    /* ----------  4.  build a second prompt for reasons  ---------- */
-    final reasonBuffer = StringBuffer()
-      ..writeln('For each task below give ONE short reason (≤12 words) why its time was chosen.')
-      ..writeln('Reply **ONLY** in JSON: {"taskId":"reason"}');
-    for (final t in timeList) {
-      final task = tasksToSchedule.firstWhere((tk) => tk.id == t['id']);
-      reasonBuffer.writeln('- ${t['id']}: ${task.title} at ${t['start']}');
-    }
-
-    final reasonResp = await gemini.generateContent([Content.text(reasonBuffer.toString())]);
-    String reasonJsonStr = (reasonResp.text ?? '{}').trim()
-        .replaceFirst(RegExp(r'^```json\s*'), '')
-        .replaceFirst(RegExp(r'\s*```$'), '');
-    dev.log('🤖  GEMINI REASON REPLY:\n$reasonJsonStr', name: 'AiScheduler');
-    final Map<String, dynamic> reasons = jsonDecode(reasonJsonStr);
-
-    /* ----------  5.  merge with existing schedule  ---------- */
+    /* 2.1  read existing schedule --------------------------- */
     final existingSnap = await db
         .collection('schedules')
         .where('uid', isEqualTo: uid)
@@ -114,31 +58,107 @@ class AiScheduler {
         .limit(1)
         .get();
 
-    List<dynamic> merged =
-        existingSnap.docs.isEmpty ? [] : List.from(existingSnap.docs.first.data()['orderedTasks']);
+    final Map<String, dynamic> existingMap = {};
+    if (existingSnap.docs.isNotEmpty) {
+      for (final slot
+          in (existingSnap.docs.first.data()['orderedTasks'] as List<dynamic>)) {
+        existingMap[slot['id'] as String] = slot;
+      }
+    }
 
+    /* 2.2  keep only NEW tasks (ID not present) ------------- */
+    final newTasks = raw.where((t) => !existingMap.containsKey(t.id)).toList();
+    if (newTasks.isEmpty) {
+      dev.log('🤖  All tasks already scheduled', name: 'AiScheduler');
+      return existingSnap.docs.isEmpty ? '' : existingSnap.docs.first.id;
+    }
+
+    /* 2.3  blocked slots from already-planned tasks --------- */
+    final blocked = await _blockedSlots(uid: uid, day: today);
+
+    /* 2.4  prompt Gemini (send MIRROR times) ---------------- */
+    final buffer = StringBuffer()
+      ..writeln('You are an expert daily-routine planner.')
+      ..writeln('Working day: 08:00-18:00. 15 min break between tasks.')
+      ..writeln('')
+      ..writeln('ACTIVITY-TIME CHEAT-SHEET (match by title / description):')
+      ..writeln('- breakfast, lunch, dinner → 19:00-21:00 / 00:00-02:00 / 06:00-08:00 (PM)')
+      ..writeln('- reading, study, learn → 21:00-23:00 or 04:00-06:00 (PM/AM reverse)')
+      ..writeln('- gym, walk, sport → 18:30-20:00 or 05:00-07:00 (evening / dawn)')
+      ..writeln('- meeting, call, email → 22:00-24:00 or 02:00-04:00 (night)')
+      ..writeln('- relax, hobby, tv → 09:00-11:00 (morning after swap)')
+      ..writeln('- sleep, nap → avoid completely')
+      ..writeln('')
+      ..writeln('Already blocked (never overlap):');
+    for (final s in blocked) {
+      final mirrorStart = _mirrorAmPm(s.start);
+      final mirrorEnd = _mirrorAmPm(s.end);
+      buffer.writeln(
+          '- ${DateFormat('HH:mm').format(mirrorStart)}–${DateFormat('HH:mm').format(mirrorEnd)}');
+    }
+    buffer
+      ..writeln('')
+      ..writeln('NEW tasks to place (choose best hour using cheat-sheet above):');
+    for (final t in newTasks) {
+      buffer.writeln(
+          '- ID:${t.id}|TITLE:${t.title}|DESC:${t.desc}|DURATION:${t.durationMin}min|PRIORITY:${t.priority.name}');
+    }
+    buffer
+      ..writeln('')
+      ..writeln('Return **ONLY** a JSON array like:')
+      ..writeln('[{"id":"taskId","start":"HH:mm","date":"$dateStr","reason":"why this hour"}]')
+      ..writeln('')
+      ..writeln('Pick the **exact clock time** that best matches the activity type. Never place meals at night.');
+
+    final resp = await gemini.generateContent([Content.text(buffer.toString())]);
+    String jsonStr = (resp.text ?? '[]').trim()
+        .replaceFirst(RegExp(r'^```json\s*'), '')
+        .replaceFirst(RegExp(r'\s*```$'), '');
+    dev.log('🤖  GEMINI TIME REPLY:\n$jsonStr', name: 'AiScheduler');
+    final List<dynamic> timeList = jsonDecode(jsonStr);
+
+    /* 2.5  reason about the *CLOCK HOUR* (not the task) ---- */
+    final reasonBuffer = StringBuffer()
+      ..writeln('You are a time-management coach.')
+      ..writeln('For each CLOCK TIME below give ONE short reason (≤12 words) '
+          'why that hour is good for productivity / energy / focus.')
+      ..writeln('Reply **ONLY** in JSON: {"HH:mm":"reason"}');
     for (final t in timeList) {
-      final start = DateFormat('HH:mm').parseUtc(t['start']).toLocal();
-      final realStart = DateTime(today.year, today.month, today.day,
-          start.hour, start.minute);
-      final task = tasksToSchedule.firstWhere((tk) => tk.id == t['id']);
+      reasonBuffer.writeln('- ${t['start']}');
+    }
+    final reasonResp = await gemini.generateContent([Content.text(reasonBuffer.toString())]);
+    String reasonJsonStr = (reasonResp.text ?? '{}').trim()
+        .replaceFirst(RegExp(r'^```json\s*'), '')
+        .replaceFirst(RegExp(r'\s*```$'), '');
+    dev.log('🤖  GEMINI REASON REPLY:\n$reasonJsonStr', name: 'AiScheduler');
+    final Map<String, dynamic> reasons = jsonDecode(reasonJsonStr);
 
-      merged.add({
+    /* 2.6  merge NEW slots into existing map (MIRROR → REAL) -- */
+    for (final t in timeList) {
+      final mirrorTime = DateFormat('HH:mm').parseUtc(t['start']).toLocal();
+      final realStart = _mirrorAmPm(DateTime(today.year, today.month, today.day,
+                                   mirrorTime.hour, mirrorTime.minute));
+
+      final task = newTasks.firstWhere((tk) => tk.id == t['id']);
+
+      existingMap[t['id'] as String] = {
         'id': t['id'],
         'title': task.title,
         'durationMin': task.durationMin,
         'start': DateFormat('HH:mm').format(realStart),
         'date': dateStr,
         'priority': task.priority.name,
-        'reason': reasons[t['id']] ?? 'Optimised by AI', // ← NEW
-      });
+        'reason': reasons[t['start']] ?? 'Optimised by AI', // ← hour-keyed
+        'scheduled': true,
+      };
     }
 
-    // sort by clock time
-    merged.sort((a, b) =>
-        DateFormat('HH:mm').parseUtc(a['start']).compareTo(DateFormat('HH:mm').parseUtc(b['start'])));
+    /* 2.7  convert map → sorted list ------------------------ */
+    final merged = existingMap.values.toList()
+      ..sort((a, b) =>
+          DateFormat('HH:mm').parseUtc(a['start']).compareTo(DateFormat('HH:mm').parseUtc(b['start'])));
 
-    /* ----------  6.  write back  ---------- */
+    /* 2.8  write back to SAME document ---------------------- */
     if (existingSnap.docs.isEmpty) {
       final doc = await db.collection('schedules').add({
         'uid': uid,
@@ -155,6 +175,13 @@ class AiScheduler {
       });
       return id;
     }
+  }
+
+  /* ----------  helper: swap AM ↔ PM  ---------- */
+  static DateTime _mirrorAmPm(DateTime src) {
+    final h = src.hour;
+    final newH = h >= 12 ? h - 12 : h + 12;
+    return DateTime(src.year, src.month, src.day, newH, src.minute);
   }
 }
 

@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:taskhaura/services/aischeduler.dart';
 import 'package:taskhaura/screens/Schpage.dart' show SchedulePage;
-import 'package:taskhaura/register.dart';
+import 'package:taskhaura/AUTH/register.dart';
 
 /* =========================================================================
    MAIN  (unchanged)
