@@ -1,39 +1,66 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum Priority { low, medium, high }
+enum TaskStatus { toStart, onDoing, done, skipped }
 
 class Task {
-  final String title;
-  final String desc;
-  final int durationMin;
-  final DateTime deadline;
-  final Priority priority;
-  final String uid; // ← NEW
+  final String        id;
+  final String        title;
+  final String        desc;
+  final int           durationMin;
+  final DateTime?     deadline;
+  final Priority      priority;
+  final String        uid;
+  final TaskStatus    status;
+  final String        tag;
+  final DateTime?     createdAt;          // ← creation time
 
-  Task({
+  const Task({
+    this.id          = '',
     required this.title,
     required this.desc,
     required this.durationMin,
     required this.deadline,
     required this.priority,
-    required this.uid, // ← NEW
+    required this.uid,
+    this.status      = TaskStatus.toStart,
+    this.tag         = '',
+    this.createdAt,
   });
 
-factory Task.fromJson(Map<String, dynamic> json) => Task(
-      title: json['title'],
-      desc: json['desc'],
-      durationMin: json['durationMin'],
-      deadline: (json['deadline'] as Timestamp).toDate(),
-      priority: Priority.values.byName(json['priority']),
-      uid: json['uid'] ?? '', // ← HANDLE MISSING FIELD
+  /* ----------------------------------------------------------------- */
+  /*  Firestore → Dart                                                 */
+  /* ----------------------------------------------------------------- */
+  factory Task.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
+    return Task(
+      id:          doc.id,
+      title:       data['title']   ?? '',
+      desc:        data['desc']    ?? '',
+      durationMin: data['durationMin'] ?? 0,
+      deadline:    (data['deadline']  as Timestamp?)?.toDate(),
+      priority:    Priority.values.byName(data['priority'] ?? 'medium'),
+      uid:         data['uid']     ?? '',
+      status:      TaskStatus.values.byName(data['status'] ?? 'toStart'),
+      tag:         data['tag']     ?? '',
+      createdAt:   (data['createdAt'] as Timestamp?)?.toDate(),
     );
+  }
 
-  Map<String, dynamic> toJson() => {
-        'title': title,
-        'desc': desc,
-        'durationMin': durationMin,
-        'deadline': Timestamp.fromDate(deadline),
-        'priority': priority.name,
-        'uid': uid, // ← NEW
-      };
+  /* ----------------------------------------------------------------- */
+  /*  Dart → Firestore                                                 */
+  /* ----------------------------------------------------------------- */
+  Map<String, dynamic> toJson() {
+    return {
+      'title':      title,
+      'desc':       desc,
+      'durationMin': durationMin,
+      'deadline':   deadline == null ? null : Timestamp.fromDate(deadline!),
+      'priority':   priority.name,
+      'uid':        uid,
+      'status':     status.name,
+      'tag':        tag,
+      'createdAt':  FieldValue.serverTimestamp(),   // ← server time
+    };
+  }
 }

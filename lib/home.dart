@@ -2,9 +2,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:taskhaura/services/aischeduler.dart';
+import 'package:taskhaura/models/task.dart';
+import 'package:taskhaura/screens/addtask.dart';
 import 'package:taskhaura/screens/Schpage.dart' show SchedulePage;
 import 'package:taskhaura/AUTH/register.dart';
+import 'package:taskhaura/screens/ai_chatscreen.dart';
+import 'package:taskhaura/widgets/task_card.dart';
 
 /* =========================================================================
    MAIN  (unchanged)
@@ -62,53 +65,8 @@ class AuthGate extends StatelessWidget {
     );
   }
 }
-
 /* =========================================================================
-   MODEL  –  NULLABLE DEADLINE
-   ========================================================================= */
-enum Priority { low, medium, high }
-
-class Task {
-  final String id;
-  final String title;
-  final String desc;
-  final int durationMin;
-  final DateTime? deadline; //  <--  NULLABLE
-  final Priority priority;
-  final String uid;
-
-  Task({
-    this.id = '',
-    required this.title,
-    required this.desc,
-    required this.durationMin,
-    required this.deadline,
-    required this.priority,
-    required this.uid,
-  });
-
-  factory Task.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) => Task(
-        id: doc.id,
-        title: doc.data()?['title'] ?? '',
-        desc: doc.data()?['desc'] ?? '',
-        durationMin: doc.data()?['durationMin'] ?? 0,
-        deadline: (doc.data()?['deadline'] as Timestamp?)?.toDate(),
-        priority: Priority.values.byName(doc.data()?['priority'] ?? 'medium'),
-        uid: doc.data()?['uid'] ?? '',
-      );
-
-  Map<String, dynamic> toJson() => {
-        'title': title,
-        'desc': desc,
-        'durationMin': durationMin,
-        'deadline': deadline == null ? null : Timestamp.fromDate(deadline!),
-        'priority': priority.name,
-        'uid': uid,
-      };
-}
-
-/* =========================================================================
-   HOME PAGE  –  SAME UI, NO TYPE ERRORS
+   HOME PAGE  –  TAG + STATUS FILTER + TRANSPARENT FLOATING BUTTONS
    ========================================================================= */
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -118,49 +76,133 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final _db = FirebaseFirestore.instance.collection('tasks');
+  final _db   = FirebaseFirestore.instance.collection('tasks');
   final _user = FirebaseAuth.instance.currentUser!;
 
-  /* ---------------- AI SCHEDULE ---------------- */
-  Future<void> _aiSchedule() async {
-    final snap = await _db.where('uid', isEqualTo: _user.uid).get();
-    final tasks = snap.docs.map(Task.fromDoc).toList();
-    if (tasks.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Add some tasks first')));
-      return;
-    }
-    try {
-      final schedId = await AiScheduler.optimiseAndSave(tasks);
-      if (schedId.isEmpty) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('No new tasks to schedule')));
-        return;
-      }
-      print('✅ schedule saved with id: $schedId');
-      if (!mounted) return;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => AlertDialog(
-          title: const Text('Schedule created'),
-          content: const Text('Your AI-generated schedule is ready.'),
-          actions: [
-            TextButton(
-              onPressed: Navigator.of(context).pop,
-              child: const Text('OK'),
+  /* ------------ FILTER STATE ------------ */
+  List<String> _userTags   = [];
+  String       _selectedTag = 'All';
+
+  final List<TaskStatus> _statuses = TaskStatus.values;
+  TaskStatus _selectedStatus = TaskStatus.toStart;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTags();
+  }
+
+  Future<void> _loadTags() async {
+    final snap = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(_user.uid)
+        .get();
+    final List<dynamic> tags = snap.data()?['tags'] ?? [];
+    if (mounted) setState(() => _userTags = tags.cast<String>());
+  }
+
+  /* ------------ TAG FILTER CHIPS ------------ */
+  Widget _buildTagFilter() {
+    if (_userTags.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      height: 44,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          _filterChip('All', _selectedTag == 'All',
+              () => setState(() => _selectedTag = 'All')),
+          const SizedBox(width: 8),
+          ..._userTags.map(
+            (t) => Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _filterChip(t, _selectedTag == t,
+                  () => setState(() => _selectedTag = t)),
             ),
-          ],
-        ),
-      );
-    } catch (e) {
-      print('❗ AI scheduler error: $e');
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Schedule failed: $e')));
+          ),
+        ],
+      ),
+    );
+  }
+
+  /* ------------ STATUS FILTER – icon + text ------------ */
+  Widget _buildStatusFilter() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 5, 12, 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: TaskStatus.values.map((s) {
+          final bool selected = _selectedStatus == s;
+          final Color iconColor = selected
+              ? const Color.fromARGB(255, 51, 103, 47)
+              : Colors.grey[600]!;
+          return GestureDetector(
+            onTap: () => setState(() => _selectedStatus = s),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(_statusIcon(s), color: iconColor, size: 26),
+                const SizedBox(height: 2),
+                Text(_statusName(s),
+                    style: TextStyle(fontSize: 11, color: iconColor)),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  IconData _statusIcon(TaskStatus s) {
+    switch (s) {
+      case TaskStatus.toStart: return Icons.play_arrow;
+      case TaskStatus.onDoing: return Icons.autorenew;
+      case TaskStatus.done:    return Icons.check_circle;
+      case TaskStatus.skipped: return Icons.skip_next;
     }
   }
 
-  /* ---------------- CRUD ---------------- */
+  String _statusName(TaskStatus s) =>
+      s.name.replaceAll('toStart', 'to start').replaceAll('onDoing', 'on doing');
+
+  /* ------------ GENERIC FILTER CHIP ------------ */
+  Widget _filterChip(String label, bool selected, VoidCallback onTap) {
+    return Material(
+      elevation: selected ? 2 : 0,
+      color: selected
+          ? const Color.fromARGB(255, 51, 103, 47).withOpacity(.35)
+          : Colors.white,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          alignment: Alignment.center,
+          child: Text(label,
+              style: TextStyle(
+                  color: selected
+                      ? const Color.fromARGB(255, 240, 240, 240)
+                      : Colors.black87,
+                  fontWeight: FontWeight.w500)),
+        ),
+      ),
+    );
+  }
+
+  /* ------------ AI ASSISTANT (bottom-sheet) ------------ */
+  Future<void> _openAiAssistant() async {
+    final snap = await _db.where('uid', isEqualTo: _user.uid).get();
+    final tasks = snap.docs.map(Task.fromDoc).toList();
+    if (!mounted) return;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => AiChatSheet(userTasks: tasks),
+    );
+  }
+
+  /* ------------ CRUD ------------ */
   Future<void> _addTask(Task task) async {
     try {
       await _db.add(task.toJson());
@@ -180,15 +222,21 @@ class _HomePageState extends State<HomePage> {
       final data = doc.data()!..['deletedAt'] = FieldValue.serverTimestamp();
       await db.collection('deletedTasks').add(data);
       await _db.doc(id).delete();
-      print('✅ task $id moved to deletedTasks');
     } catch (e) {
-      print('❗ move+delete failed: $e');
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Delete failed: $e')));
     }
   }
 
-  /* ---------------- LOGOUT ---------------- */
+  Future<void> _showEditSheet(Task task, String id) async {
+    final result = await showModalBottomSheet<Task>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => TaskBottomSheet(uid: _user.uid, existingTask: task),
+    );
+    if (result != null) await _updateTask(id, result);
+  }
+
   Future<void> _confirmLogout() async {
     final yes = await showDialog<bool>(
       context: context,
@@ -215,133 +263,146 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /* ---------------- BOTTOM SHEETS ---------------- */
-  Future<void> _showAddSheet() async {
-    final result = await showModalBottomSheet<Task>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => TaskBottomSheet(uid: _user.uid),
-    );
-    if (result != null) await _addTask(result);
-  }
-
-  Future<void> _showEditSheet(Task task, String id) async {
-    final result = await showModalBottomSheet<Task>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => TaskBottomSheet(uid: _user.uid, existingTask: task),
-    );
-    if (result != null) await _updateTask(id, result);
-  }
-
-  /* ---------------- BUILD ---------------- */
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        title: const Text('Task Haura'),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.white),
-            onPressed: _confirmLogout,
-          ),
-        ],
-      ),
-      body: Stack(
+  /* ------------ BUILD ------------ */
+ /* ------------ BUILD ------------ */
+@override
+Widget build(BuildContext context) {
+  return Scaffold(
+    /* 1.  let the body start *after* the app-bar */
+    extendBodyBehindAppBar: false,          //  <—  changed
+    /* 2.  give the bar a solid colour so it covers the gradient */
+    appBar: AppBar(
+      backgroundColor: const Color(0xFF74EC7A), //  <—  solid colour
+      elevation: 0,
+      title: Row(
         children: [
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topRight,
-                end: Alignment.center,
-                colors: [Color(0xFF74EC7A), Colors.white],
-              ),
-            ),
-          ),
-          SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-                  child: Row(
-                    children: [
-                      Image.asset('assets/taskhauralogo.png',
-                          width: 36, height: 36),
-                      const SizedBox(width: 12),
-                      const Text('Task Haura',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                    stream: _db
-                        .where('uid', isEqualTo: _user.uid)
-                        .orderBy('deadline')
-                        .snapshots(),
-                    builder: (_, snap) {
-                      if (snap.hasError) return Center(child: Text('${snap.error}'));
-                      if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-                      final docs = snap.data!.docs;
-                      if (docs.isEmpty) {
-                        return const Center(
-                          child: Text('No tasks yet – tap + to add one',
-                              style: TextStyle(color: Colors.white70)),
-                        );
-                      }
-                      return ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        itemCount: docs.length,
-                        itemBuilder: (_, i) {
-                          final task = Task.fromDoc(docs[i]);
-                          return Dismissible(
-                            key: Key(task.id),
-                            background: Container(color: Colors.red),
-                            onDismissed: (_) => _deleteTask(task.id),
-                            child: TaskCard(
-                              task: task,
-                              onEdit: () => _showEditSheet(task, docs[i].id),
-                              onDelete: () => _deleteTask(task.id),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    FloatingActionButton(
-                      heroTag: 'add',
-                      onPressed: _showAddSheet,
-                      tooltip: 'Add task',
-                      child: const Icon(Icons.add),
-                    ),
-                    const SizedBox(width: 16),
-                    FloatingActionButton(
-                      heroTag: 'ai',
-                      onPressed: _aiSchedule,
-                      tooltip: 'AI schedule',
-                      child: const Icon(Icons.auto_fix_high),
-                    ),
-                  ],
-                )
-              ],
-            ),
+          Image.asset('assets/taskhauralogo.png', width: 36, height: 36),
+          const SizedBox(width: 12),
+          const Text(
+            'Task Haura',
+            style: TextStyle(
+                color: Colors.white,
+                fontSize: 28,
+                fontWeight: FontWeight.bold),
           ),
         ],
       ),
-    );
-  }
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.menu, color: Colors.white),
+          onPressed: () => Scaffold.of(context).openEndDrawer(),
+        ),
+      ],
+    ),
+    endDrawer: Drawer( /* … unchanged … */ ),
+    body: Stack(
+      children: [
+        /* gradient background */
+        Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.center,
+              colors: [Color.fromARGB(255, 131, 245, 103), Colors.white],
+            ),
+          ),
+        ),
+
+        /* content + transparent FABs */
+        Column(
+          children: [
+            const SizedBox(height: 8),        //  tiny top padding (optional)
+            _buildTagFilter(),                //  now drawn *below* the AppBar
+            const SizedBox(height: 10),
+            _buildStatusFilter(),
+            Expanded(child: _buildTaskList()),
+          ],
+        ),
+
+        /* transparent floating buttons */
+       /* transparent floating buttons */
+Positioned(
+  right: 16,
+  bottom: 16,
+  child: Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      // FloatingActionButton(
+      //   heroTag: 'add',
+      //   onPressed: () async {
+      //     final newTask = await Navigator.of(context).push<Task>(
+      //       MaterialPageRoute(
+      //         builder: (_) => AddTaskPage(uid: _user.uid),
+      //       ),
+      //     );
+      //     if (newTask != null) await _addTask(newTask);
+      //   },
+      //   tooltip: 'Add task',
+      //   child: const Icon(Icons.add),
+      // ),
+      const SizedBox(height: 12),
+      FloatingActionButton(
+        heroTag: 'ai',
+        onPressed: _openAiAssistant,
+        tooltip: 'AI Assistant',
+        child: const Icon(Icons.add),
+      ),
+    ],
+  ),
+),
+      ],
+    ),
+  );
 }
 
+
+/* extracted task-list builder – keeps build() clean */
+Widget _buildTaskList() {
+  return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+    stream: _db
+        .where('uid', isEqualTo: _user.uid)
+        .orderBy('deadline')
+        .snapshots(),
+    builder: (_, snap) {
+      if (snap.hasError) return Center(child: Text('${snap.error}'));
+      if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+
+      final docs = snap.data!.docs;
+      final filtered = docs.where((d) {
+        final t = Task.fromDoc(d);
+        final tagOk = _selectedTag == 'All' || t.tag == _selectedTag;
+        final statusOk = _selectedStatus == t.status;
+        return tagOk && statusOk;
+      }).toList();
+
+      if (filtered.isEmpty) {
+        return const Center(
+          child: Text('No tasks match the selected filters',
+              style: TextStyle(color: Colors.white70)),
+        );
+      }
+
+      return ListView.builder(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
+        itemCount: filtered.length,
+        itemBuilder: (_, i) {
+          final task = Task.fromDoc(filtered[i]);
+          return Dismissible(
+            key: Key(task.id),
+            background: Container(color: Colors.red),
+            onDismissed: (_) => _deleteTask(task.id),
+            child: TaskCard(
+              task: task,
+              onEdit: () => _showEditSheet(task, filtered[i].id),
+              onDelete: () => _deleteTask(task.id),
+            ),
+          );
+        },
+      );
+    },
+  );
+}
+}
 /* =========================================================================
    BOTTOM SHEET  –  NULL-SAFE
    ========================================================================= */
@@ -391,6 +452,9 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
     );
     if (picked != null) setState(() => _deadline = picked);
   }
+
+/* ------------ OPEN FULL-SCREEN AI ASSISTANT ------------ */
+
 
   void _submit() {
     if (_formKey.currentState!.validate()) {
@@ -473,106 +537,6 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/* =========================================================================
-   TASK CARD  –  NULL-SAFE
-   ========================================================================= */
-class TaskCard extends StatelessWidget {
-  final Task task;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-  const TaskCard({
-    super.key,
-    required this.task,
-    required this.onEdit,
-    required this.onDelete,
-  });
-
-  Color _priorityColor() => task.priority == Priority.high
-      ? Colors.redAccent
-      : task.priority == Priority.medium
-          ? Colors.orangeAccent
-          : Colors.green;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      color: Colors.white.withOpacity(.72),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(task.title,
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.edit_outlined, size: 18),
-                  onPressed: onEdit,
-                  splashRadius: 20,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline,
-                      size: 18, color: Colors.red),
-                  onPressed: () => _confirmDelete(context),
-                  splashRadius: 20,
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(task.desc, maxLines: 2, overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Icon(Icons.schedule, size: 14, color: Colors.grey[600]),
-                const SizedBox(width: 4),
-                Text('${task.durationMin} min'),
-                const SizedBox(width: 16),
-                Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
-                const SizedBox(width: 4),
-                Text(DateFormat('MMM d').format(task.deadline ?? DateTime.now())),
-                const Spacer(),
-                Chip(
-                  label: Text(task.priority.name.toUpperCase(),
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 10)),
-                  backgroundColor: _priorityColor(),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _confirmDelete(BuildContext ctx) {
-    showDialog<bool>(
-      context: ctx,
-      builder: (_) => AlertDialog(
-        title: const Text('Delete task?'),
-        content: const Text('This cannot be undone.'),
-        actions: [
-          TextButton(
-              onPressed: Navigator.of(ctx).pop, child: const Text('CANCEL')),
-          TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop(true);
-              onDelete();
-            },
-            child: const Text('DELETE', style: TextStyle(color: Colors.red)),
-          ),
-        ],
       ),
     );
   }

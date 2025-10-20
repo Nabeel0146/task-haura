@@ -3,6 +3,7 @@ import 'dart:developer' as dev;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_ai/firebase_ai.dart';
 import 'package:intl/intl.dart';
+import 'package:taskhaura/models/task.dart';
 import '../main.dart'; // gemini + db
 import '../home.dart'; // Task model
 
@@ -38,6 +39,91 @@ class AiScheduler {
     }).toList();
   }
 
+/* ----------------------------------------------------------
+ *  Chat-like prompt for ONE task  (returns pretty message)
+ * ---------------------------------------------------------- */
+static Future<String> chatSchedule(Task task) async {
+  final today = DateTime.now();
+  final dateStr = DateFormat('yyyy-MM-dd').format(today);
+
+  final blocked = await _blockedSlots(uid: task.uid, day: today);
+
+  final prompt = StringBuffer()
+    ..writeln('You are a friendly daily planner.')
+    ..writeln('Working day 08:00-18:00, 15 min breaks.')
+    ..writeln('Already booked:')
+    ..writeln(blocked.map((b) =>
+        '- ${DateFormat('HH:mm').format(b.start)}-${DateFormat('HH:mm').format(b.end)}').join('\n'))
+    ..writeln('')
+    ..writeln('Suggest the **best single slot** for:')
+    ..writeln('Title: ${task.title}')
+    ..writeln('Duration: ${task.durationMin} min')
+    ..writeln('Priority: ${task.priority.name}')
+    ..writeln('')
+    ..writeln('Reply in **one short sentence** like:')
+    ..writeln('"How about 14:30-15:00? It fits perfectly after lunch!"');
+
+  final resp = await gemini.generateContent([Content.text(prompt.toString())]);
+  return resp.text?.trim() ?? 'No suggestion available';
+}
+
+/* ----------------------------------------------------------
+ *  Insert the task at the proposed HH:mm (parse from sentence)
+ * ---------------------------------------------------------- */
+static Future<void> insertSingleSlot(Task task, String sentence, DateTime dateTime) async {
+  final today = DateTime.now();
+  final dateStr = DateFormat('yyyy-MM-dd').format(today);
+
+  // crude regex to pull HH:mm
+  final timeMatch = RegExp(r'(\d{1,2}):(\d{2})').firstMatch(sentence);
+  if (timeMatch == null) return; // silent fail – could show UI error
+
+  final hour = int.parse(timeMatch.group(1)!);
+  final min = int.parse(timeMatch.group(2)!);
+  final start = DateTime(today.year, today.month, today.day, hour, min);
+  final end = start.add(Duration(minutes: task.durationMin));
+
+  // read existing schedule
+  final schedSnap = await db
+      .collection('schedules')
+      .where('uid', isEqualTo: task.uid)
+      .where('scheduleDate', isEqualTo: dateStr)
+      .orderBy('createdAt', descending: true)
+      .limit(1)
+      .get();
+
+  final List<Map<String, dynamic>> merged =
+      schedSnap.docs.isEmpty ? [] : List.from(schedSnap.docs.first.data()['orderedTasks']);
+
+  merged.add({
+    'id': task.id,
+    'title': task.title,
+    'durationMin': task.durationMin,
+    'start': DateFormat('HH:mm').format(start),
+    'date': dateStr,
+    'priority': task.priority.name,
+    'reason': sentence,
+    'scheduled': true,
+  });
+
+  merged.sort((a, b) => DateFormat('HH:mm')
+      .parseUtc(a['start'])
+      .compareTo(DateFormat('HH:mm').parseUtc(b['start'])));
+
+  if (schedSnap.docs.isEmpty) {
+    await db.collection('schedules').add({
+      'uid': task.uid,
+      'scheduleDate': dateStr,
+      'orderedTasks': merged,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+  } else {
+    await db.collection('schedules').doc(schedSnap.docs.first.id).update({
+      'orderedTasks': merged,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+  }
+}
   /* ----------------------------------------------------------
    * 2.  MAIN ENTRY-POINT
    *     -  skips already-scheduled tasks (by ID)
