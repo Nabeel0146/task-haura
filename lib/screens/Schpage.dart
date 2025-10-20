@@ -1,5 +1,4 @@
 import 'package:taskhaura/screens/manualtask.dart';
-
 import '../main.dart'; // gemini + db
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -14,7 +13,7 @@ class _ScheduledTask {
   final DateTime start;
   final DateTime date;
   final String priority;
-  final String? reason; // ← NEW
+  final String? reason;
 
   _ScheduledTask.fromJson(Map<String, dynamic> json)
       : id = json['id'],
@@ -23,9 +22,34 @@ class _ScheduledTask {
         start = DateFormat('HH:mm').parseUtc(json['start']).toLocal(),
         date = DateFormat('yyyy-MM-dd').parseUtc(json['date']).toLocal(),
         priority = json['priority'],
-        reason = json['reason']?.toString(); // ← NEW
-}
+        reason = json['reason']?.toString();
 
+  Color get priorityColor {
+    switch (priority) {
+      case 'high':
+        return const Color(0xFFFF6B6B);
+      case 'medium':
+        return const Color(0xFFFFA726);
+      case 'low':
+        return const Color(0xFF74EC7A);
+      default:
+        return const Color(0xFF74EC7A);
+    }
+  }
+
+  Color get priorityLightColor {
+    switch (priority) {
+      case 'high':
+        return const Color(0xFFFFEBEE);
+      case 'medium':
+        return const Color(0xFFFFF3E0);
+      case 'low':
+        return const Color(0xFFE8F5E8);
+      default:
+        return const Color(0xFFE8F5E8);
+    }
+  }
+}
 
 /* --------------------  PAGE  -------------------- */
 class SchedulePage extends StatefulWidget {
@@ -39,7 +63,6 @@ class _SchedulePageState extends State<SchedulePage>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   late final List<DateTime> _days;
-  
 
   @override
   void initState() {
@@ -83,7 +106,7 @@ class _SchedulePageState extends State<SchedulePage>
       final uid = FirebaseAuth.instance.currentUser!.uid;
       final now = DateTime.now();
 
-      /* 1.  remove from schedule */
+      /* 1. remove from schedule */
       final schedRef =
           FirebaseFirestore.instance.collection('schedules').doc(schedDocId);
       final currentList =
@@ -94,10 +117,10 @@ class _SchedulePageState extends State<SchedulePage>
             .compareTo(DateFormat('HH:mm').parseUtc(b['start'])));
       await schedRef.update({'orderedTasks': updatedList});
 
-      /* 2.  AI insight */
+      /* 2. AI insight */
       final insight = await _generateInsight(task, now);
 
-      /* 3.  store in doneTasks */
+      /* 3. store in doneTasks */
       await FirebaseFirestore.instance.collection('doneTasks').add({
         'id': task.id,
         'title': task.title,
@@ -110,7 +133,7 @@ class _SchedulePageState extends State<SchedulePage>
         'aiInsight': insight,
       });
 
-      /* 4.  user behaviour */
+      /* 4. user behaviour */
       final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
       final userSnap = await userRef.get();
       final behaviour =
@@ -120,6 +143,22 @@ class _SchedulePageState extends State<SchedulePage>
       behaviour['lastCompletedAt'] = now;
       behaviour['lastInsight'] = insight;
       await userRef.set({'behaviour': behaviour}, SetOptions(merge: true));
+
+      // Show success feedback
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green.shade100),
+                const SizedBox(width: 8),
+                const Text('Task completed!'),
+              ],
+            ),
+            backgroundColor: Colors.green.shade600,
+          ),
+        );
+      }
     } catch (e) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Mark done failed: $e')));
@@ -143,6 +182,26 @@ Task: "${task.title}" | Priority: ${task.priority} | Scheduled: ${DateFormat('HH
 
   /* ---------------  DELETE TASK  --------------- */
   Future<void> _deleteTask(_ScheduledTask task, String schedDocId) async {
+    bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Task?'),
+        content: Text('Are you sure you want to delete "${task.title}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('CANCEL'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('DELETE', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
     try {
       final schedRef =
           FirebaseFirestore.instance.collection('schedules').doc(schedDocId);
@@ -171,54 +230,24 @@ Task: "${task.title}" | Priority: ${task.priority} | Scheduled: ${DateFormat('HH
   }
 
   /* ---------------  MANUAL ADD  --------------- */
-  /* ---------------  MANUAL ADD  --------------- */
-Future<void> _showManualAddSheet(String schedDocId, DateTime forDay) async {
-  final result = await Navigator.of(context).push<Map<String,dynamic>>(
-    MaterialPageRoute(
-      builder: (_) => ManualAddPage(day: forDay),
-    ),
-  );
+  Future<void> _showManualAddSheet(String schedDocId, DateTime forDay) async {
+    final result = await Navigator.of(context).push<Map<String,dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => ManualAddPage(day: forDay),
+      ),
+    );
 
-  // user pressed BACK ➜ nothing to do
-  if (result == null) return;
+    if (result == null) return;
 
-  // append the new slot to the existing schedule document
-  final schedRef =
-      FirebaseFirestore.instance.collection('schedules').doc(schedDocId);
-  final currentList =
-      (await schedRef.get()).data()!['orderedTasks'] as List<dynamic>;
-  final updatedList = [...currentList, result]
-    ..sort((a, b) => DateFormat('HH:mm')
-        .parseUtc(a['start'])
-        .compareTo(DateFormat('HH:mm').parseUtc(b['start'])));
-  await schedRef.update({'orderedTasks': updatedList});
-}
-
-  /* ---------------  FETCH BLOCKED SLOTS  --------------- */
-  Future<List<_BlockedSlot>> _blockedSlots({
-    required String uid,
-    required DateTime day,
-  }) async {
-    final snap = await FirebaseFirestore.instance
-        .collection('schedules')
-        .where('uid', isEqualTo: uid)
-        .where('scheduleDate', isEqualTo: DateFormat('yyyy-MM-dd').format(day))
-        .orderBy('createdAt', descending: true)
-        .limit(1)
-        .get();
-    if (snap.docs.isEmpty) return [];
-    return (snap.docs.first.data()['orderedTasks'] as List<dynamic>)
-        .map((json) {
-      final date = DateFormat('yyyy-MM-dd').parseUtc(json['date']).toLocal();
-      final start = DateFormat('HH:mm').parseUtc(json['start']).toLocal();
-      final realStart =
-          DateTime(date.year, date.month, date.day, start.hour, start.minute);
-      final dur = json['durationMin'] as int;
-      return _BlockedSlot(
-        start: realStart,
-        end: realStart.add(Duration(minutes: dur + 15)), // incl. break
-      );
-    }).toList();
+    final schedRef =
+        FirebaseFirestore.instance.collection('schedules').doc(schedDocId);
+    final currentList =
+        (await schedRef.get()).data()!['orderedTasks'] as List<dynamic>;
+    final updatedList = [...currentList, result]
+      ..sort((a, b) => DateFormat('HH:mm')
+          .parseUtc(a['start'])
+          .compareTo(DateFormat('HH:mm').parseUtc(b['start'])));
+    await schedRef.update({'orderedTasks': updatedList});
   }
 
   /* ---------------  UI HELPERS  --------------- */
@@ -238,52 +267,177 @@ Future<void> _showManualAddSheet(String schedDocId, DateTime forDay) async {
         .toList();
   }
 
-  /* ---------------  TASK CARD  --------------- */
+  /* ---------------  TASK CARD - IMPROVED  --------------- */
   Widget _taskCard(_ScheduledTask task, String schedDocId) {
     final start = task.start;
     final end = start.add(Duration(minutes: task.durationMin));
     final slot = '${_12h(start)} – ${_12h(end)}';
-    /* ---------------  REASON ROW  --------------- */
-final reason = task.reason ?? 'Manually Scheduled';
+    final reason = task.reason ?? 'Manually Scheduled';
 
-    final color = task.priority == 'high'
-        ? Colors.redAccent
-        : task.priority == 'medium'
-            ? Colors.orangeAccent
-            : Colors.green;
-
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: ListTile(
-        leading: CircleAvatar(child: Text('${start.hour}')),
-        title: Text(task.title,
-            style: const TextStyle(fontWeight: FontWeight.bold)),
-       subtitle: Column(
-  crossAxisAlignment: CrossAxisAlignment.start,
-  mainAxisSize: MainAxisSize.min,
-  children: [
-    Text(slot),
-    Text('Reason: $reason', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-  ],
-),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.check_circle_outline, color: Colors.green),
-              tooltip: 'Mark done',
-              onPressed: () => _markDone(task, schedDocId),
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            // Optional: Show task details
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                // Priority Indicator
+                Container(
+                  width: 4,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: task.priorityColor,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                
+                // Task Content
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          // Priority Badge
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: task.priorityLightColor,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              task.priority.toUpperCase(),
+                              style: TextStyle(
+                                color: task.priorityColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            slot,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        task.title,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Duration: ${task.durationMin} min • $reason',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                
+                // Action Buttons
+                Column(
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.check_circle_outline, 
+                          color: Colors.green.shade600),
+                      tooltip: 'Mark done',
+                      onPressed: () => _markDone(task, schedDocId),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.delete_outline, 
+                          color: Colors.red.shade400),
+                      tooltip: 'Delete',
+                      onPressed: () => _deleteTask(task, schedDocId),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.red),
-              tooltip: 'Delete',
-              onPressed: () => _deleteTask(task, schedDocId),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
+
+  /* ---------------  EMPTY STATE  --------------- */
+  Widget _buildEmptyState(DateTime day) {
+    return Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.schedule_outlined,
+            size: 64,
+            color: Colors.grey.shade300,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'No tasks scheduled',
+            style: TextStyle(
+              fontSize: 18,
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Add tasks to see your schedule here',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey.shade500,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: bundle?.docId.isEmpty == false 
+                ? () => _showManualAddSheet(bundle!.docId, day)
+                : null,
+            icon: const Icon(Icons.add),
+            label: const Text('Add Task'),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF74EC7A),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  _ScheduleBundle? bundle;
 
   /* ---------------  BUILD  --------------- */
   @override
@@ -291,170 +445,161 @@ final reason = task.reason ?? 'Manually Scheduled';
     return StreamBuilder<_ScheduleBundle>(
       stream: _streamSchedule(),
       builder: (_, snap) {
-        if (snap.hasError) return Center(child: Text('Error: ${snap.error}'));
-        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+        if (snap.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 64, color: Colors.red.shade300),
+                const SizedBox(height: 16),
+                Text(
+                  'Something went wrong',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
 
-        final bundle = snap.data!;
+        if (!snap.hasData) {
+          return const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        bundle = snap.data!;
         final activeDay = _days[_tabController.index];
 
         return Scaffold(
+          backgroundColor: Colors.grey[50],
           appBar: AppBar(
-            title: const Text('AI Created Schedule'),
-            bottom: TabBar(
-              controller: _tabController,
-              isScrollable: true,
-              tabs: [for (final d in _days) Tab(text: _tabLabel(d))],
+            title: const Text(
+              'Your Schedule',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 20,
+              ),
+            ),
+            backgroundColor: Colors.white,
+            elevation: 0,
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(48),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 2,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: TabBar(
+                  controller: _tabController,
+                  isScrollable: true,
+                  labelColor: const Color(0xFF74EC7A),
+                  unselectedLabelColor: Colors.grey,
+                  indicatorColor: const Color(0xFF74EC7A),
+                  indicatorWeight: 3,
+                  tabs: [
+                    for (final d in _days)
+                      Tab(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Column(
+                            children: [
+                              Text(
+                                _tabLabel(d).split(' ')[0],
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                              Text(
+                                _tabLabel(d).contains(' ') 
+                                    ? _tabLabel(d).split(' ')[1]
+                                    : '',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
-          floatingActionButton: FloatingActionButton(
-            heroTag: 'manual',
-            tooltip: 'Add manual slot',
-            child: const Icon(Icons.add),
-            onPressed: bundle.docId.isEmpty
-                ? null
-                : () => _showManualAddSheet(bundle.docId, activeDay),
-          ),
+          floatingActionButton: bundle!.docId.isEmpty
+              ? null
+              : FloatingActionButton(
+                  heroTag: 'manual',
+                  tooltip: 'Add manual slot',
+                  backgroundColor: const Color(0xFF74EC7A),
+                  child: const Icon(Icons.add, color: Colors.white),
+                  onPressed: () => _showManualAddSheet(bundle!.docId, activeDay),
+                ),
           body: TabBarView(
             controller: _tabController,
             children: [
               for (final day in _days)
-                _filterDay(bundle.tasks, day).isEmpty
-                    ? Center(child: Text('No tasks for ${_tabLabel(day)}'))
-                    : ListView(
-                        padding: const EdgeInsets.only(top: 8, bottom: 16),
+                _filterDay(bundle!.tasks, day).isEmpty
+                    ? _buildEmptyState(day)
+                    : Column(
                         children: [
-                          for (final t in _filterDay(bundle.tasks, day))
-                            _taskCard(t, bundle.docId),
+                          // Header with day info
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            color: Colors.white,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.calendar_today,
+                                  color: const Color(0xFF74EC7A),
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  DateFormat('EEEE, MMMM d').format(day),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  '${_filterDay(bundle!.tasks, day).length} tasks',
+                                  style: TextStyle(
+                                    color: Colors.grey.shade600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          // Task List
+                          Expanded(
+                            child: ListView(
+                              padding: const EdgeInsets.only(bottom: 16),
+                              children: [
+                                for (final t in _filterDay(bundle!.tasks, day))
+                                  _taskCard(t, bundle!.docId),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
             ],
           ),
         );
       },
-    );
-  }
-}
-
-/* ---------------  MANUAL SLOT BOTTOM SHEET  --------------- */
-class _ManualSlotSheet extends StatefulWidget {
-  final DateTime forDay;
-  final List<_BlockedSlot> blockedSlots;
-  const _ManualSlotSheet({required this.forDay, required this.blockedSlots});
-
-  @override
-  State<_ManualSlotSheet> createState() => _ManualSlotSheetState();
-}
-
-class _ManualSlotSheetState extends State<_ManualSlotSheet> {
-  final _formKey = GlobalKey<FormState>();
-  final _titleCtrl = TextEditingController();
-  final _durationCtrl = TextEditingController(text: '30');
-  String _priority = 'medium';
-  String? _selectedTime; // HH:mm
-
-  /* ---------------  GENERATE FREE SLOTS  --------------- */
-  List<String> _freeSlots() {
-    final List<String> free = [];
-    const startHour = 8;
-    const endHour = 18;
-    const step = 15; // minutes
-
-    for (int h = startHour; h < endHour; h++) {
-      for (int m = 0; m < 60; m += step) {
-        final slot = DateTime(widget.forDay.year, widget.forDay.month,
-            widget.forDay.day, h, m);
-        final slotEnd = slot.add(const Duration(minutes: 30)); // default 30 min
-        bool overlap = widget.blockedSlots.any((b) =>
-            slot.isBefore(b.end) && slotEnd.isAfter(b.start));
-        if (!overlap) free.add(DateFormat('HH:mm').format(slot));
-      }
-    }
-    return free;
-  }
-
-  /* ---------------  SAVE  --------------- */
-  void _submit() {
-    if (_formKey.currentState!.validate() && _selectedTime != null) {
-      Navigator.of(context).pop({
-        'title': _titleCtrl.text.trim(),
-        'duration': int.parse(_durationCtrl.text.trim()),
-        'priority': _priority,
-        'start': _selectedTime!,
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _titleCtrl.dispose();
-    _durationCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final freeSlots = _freeSlots();
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-        left: 24,
-        right: 24,
-        top: 24,
-      ),
-      child: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Add manual time block',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _titleCtrl,
-                decoration: const InputDecoration(labelText: 'Title'),
-                validator: (v) => v!.trim().isEmpty ? 'Required' : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _durationCtrl,
-                decoration: const InputDecoration(
-                    labelText: 'Duration (minutes)', suffixText: 'min'),
-                keyboardType: TextInputType.number,
-                validator: (v) =>
-                    v == null || int.tryParse(v) == null ? 'Number' : null,
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _priority,
-                items: ['low', 'medium', 'high']
-                    .map((p) => DropdownMenuItem(value: p, child: Text(p)))
-                    .toList(),
-                onChanged: (v) => setState(() => _priority = v!),
-                decoration: const InputDecoration(labelText: 'Priority'),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _selectedTime,
-                items: freeSlots
-                    .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                    .toList(),
-                onChanged: (v) => setState(() => _selectedTime = v),
-                decoration: const InputDecoration(
-                    labelText: 'Start time (free slots)'),
-                validator: (v) => v == null ? 'Pick a time' : null,
-              ),
-              const SizedBox(height: 24),
-              FilledButton.tonalIcon(
-                icon: const Icon(Icons.save),
-                label: const Text('CREATE'),
-                onPressed: _submit,
-              ),
-              const SizedBox(height: 16),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

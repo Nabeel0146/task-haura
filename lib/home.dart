@@ -6,7 +6,7 @@ import 'package:taskhaura/models/task.dart';
 import 'package:taskhaura/screens/addtask.dart';
 import 'package:taskhaura/screens/Schpage.dart' show SchedulePage;
 import 'package:taskhaura/AUTH/register.dart';
-import 'package:taskhaura/screens/ai_chatscreen.dart';
+import 'package:taskhaura/ai/ai_chatscreen.dart';
 import 'package:taskhaura/widgets/task_card.dart';
 
 /* =========================================================================
@@ -76,12 +76,12 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final _db   = FirebaseFirestore.instance.collection('tasks');
+  final _db = FirebaseFirestore.instance.collection('tasks');
   final _user = FirebaseAuth.instance.currentUser!;
 
   /* ------------ FILTER STATE ------------ */
-  List<String> _userTags   = [];
-  String       _selectedTag = 'All';
+  List<String> _userTags = [];
+  String _selectedTag = 'All';
 
   final List<TaskStatus> _statuses = TaskStatus.values;
   TaskStatus _selectedStatus = TaskStatus.toStart;
@@ -101,6 +101,29 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() => _userTags = tags.cast<String>());
   }
 
+
+ /* ------------ HANDLE TASK CHECK ------------ */
+Future<void> _handleTaskCheck(Task task, String docId) async {
+  TaskStatus newStatus;
+  
+  switch (task.status) {
+    case TaskStatus.toStart:
+      newStatus = TaskStatus.onDoing;
+      break;
+    case TaskStatus.onDoing:
+      newStatus = TaskStatus.done;
+      break;
+    case TaskStatus.done:
+      newStatus = TaskStatus.done; // Stay done if already done
+      break;
+    case TaskStatus.skipped:
+      newStatus = TaskStatus.skipped; // Stay skipped if already skipped
+      break;
+  }
+  
+  await _db.doc(docId).update({'status': newStatus.name});
+}
+
   /* ------------ TAG FILTER CHIPS ------------ */
   Widget _buildTagFilter() {
     if (_userTags.isEmpty) return const SizedBox.shrink();
@@ -116,8 +139,8 @@ class _HomePageState extends State<HomePage> {
           ..._userTags.map(
             (t) => Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: _filterChip(t, _selectedTag == t,
-                  () => setState(() => _selectedTag = t)),
+              child: _filterChip(
+                  t, _selectedTag == t, () => setState(() => _selectedTag = t)),
             ),
           ),
         ],
@@ -155,15 +178,20 @@ class _HomePageState extends State<HomePage> {
 
   IconData _statusIcon(TaskStatus s) {
     switch (s) {
-      case TaskStatus.toStart: return Icons.play_arrow;
-      case TaskStatus.onDoing: return Icons.autorenew;
-      case TaskStatus.done:    return Icons.check_circle;
-      case TaskStatus.skipped: return Icons.skip_next;
+      case TaskStatus.toStart:
+        return Icons.play_arrow;
+      case TaskStatus.onDoing:
+        return Icons.autorenew;
+      case TaskStatus.done:
+        return Icons.check_circle;
+      case TaskStatus.skipped:
+        return Icons.skip_next;
     }
   }
 
-  String _statusName(TaskStatus s) =>
-      s.name.replaceAll('toStart', 'to start').replaceAll('onDoing', 'on doing');
+  String _statusName(TaskStatus s) => s.name
+      .replaceAll('toStart', 'to start')
+      .replaceAll('onDoing', 'on doing');
 
   /* ------------ GENERIC FILTER CHIP ------------ */
   Widget _filterChip(String label, bool selected, VoidCallback onTap) {
@@ -264,99 +292,99 @@ class _HomePageState extends State<HomePage> {
   }
 
   /* ------------ BUILD ------------ */
- /* ------------ BUILD ------------ */
-@override
-Widget build(BuildContext context) {
-  return Scaffold(
-    /* 1.  let the body start *after* the app-bar */
-    extendBodyBehindAppBar: false,          //  <—  changed
-    /* 2.  give the bar a solid colour so it covers the gradient */
-    appBar: AppBar(
-      backgroundColor: const Color(0xFF74EC7A), //  <—  solid colour
-      elevation: 0,
-      title: Row(
-        children: [
-          Image.asset('assets/taskhauralogo.png', width: 36, height: 36),
-          const SizedBox(width: 12),
-          const Text(
-            'Task Haura',
-            style: TextStyle(
-                color: Colors.white,
-                fontSize: 28,
-                fontWeight: FontWeight.bold),
+  /* ------------ BUILD ------------ */
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      /* 1.  let the body start *after* the app-bar */
+      extendBodyBehindAppBar: false, //  <—  changed
+      /* 2.  give the bar a solid colour so it covers the gradient */
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF74EC7A), //  <—  solid colour
+        elevation: 0,
+        title: Row(
+          children: [
+            Image.asset('assets/taskhauralogo.png', width: 36, height: 36),
+            const SizedBox(width: 12),
+            const Text(
+              'Task Haura',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.menu, color: Colors.white),
+            onPressed: () => Scaffold.of(context).openEndDrawer(),
           ),
         ],
       ),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.menu, color: Colors.white),
-          onPressed: () => Scaffold.of(context).openEndDrawer(),
-        ),
-      ],
-    ),
-    endDrawer: Drawer( /* … unchanged … */ ),
-    body: Stack(
-      children: [
-        /* gradient background */
-        Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.center,
-              colors: [Color.fromARGB(255, 131, 245, 103), Colors.white],
+      endDrawer: Drawer(/* … unchanged … */),
+      body: Stack(
+        children: [
+          /* gradient background */
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.center,
+                colors: [Color.fromARGB(255, 131, 245, 103), Colors.white],
+              ),
             ),
           ),
-        ),
 
-        /* content + transparent FABs */
-        Column(
-          children: [
-            const SizedBox(height: 8),        //  tiny top padding (optional)
-            _buildTagFilter(),                //  now drawn *below* the AppBar
-            const SizedBox(height: 10),
-            _buildStatusFilter(),
-            Expanded(child: _buildTaskList()),
-          ],
-        ),
+          /* content + transparent FABs */
+          Column(
+            children: [
+              const SizedBox(height: 8), //  tiny top padding (optional)
+              _buildTagFilter(), //  now drawn *below* the AppBar
+              const SizedBox(height: 10),
+              _buildStatusFilter(),
+              Expanded(child: _buildTaskList()),
+            ],
+          ),
 
-        /* transparent floating buttons */
-       /* transparent floating buttons */
-Positioned(
-  right: 16,
-  bottom: 16,
-  child: Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      // FloatingActionButton(
-      //   heroTag: 'add',
-      //   onPressed: () async {
-      //     final newTask = await Navigator.of(context).push<Task>(
-      //       MaterialPageRoute(
-      //         builder: (_) => AddTaskPage(uid: _user.uid),
-      //       ),
-      //     );
-      //     if (newTask != null) await _addTask(newTask);
-      //   },
-      //   tooltip: 'Add task',
-      //   child: const Icon(Icons.add),
-      // ),
-      const SizedBox(height: 12),
-      FloatingActionButton(
-        heroTag: 'ai',
-        onPressed: _openAiAssistant,
-        tooltip: 'AI Assistant',
-        child: const Icon(Icons.add),
+          /* transparent floating buttons */
+          /* transparent floating buttons */
+          Positioned(
+            right: 16,
+            bottom: 16,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // FloatingActionButton(
+                //   heroTag: 'add',
+                //   onPressed: () async {
+                //     final newTask = await Navigator.of(context).push<Task>(
+                //       MaterialPageRoute(
+                //         builder: (_) => AddTaskPage(uid: _user.uid),
+                //       ),
+                //     );
+                //     if (newTask != null) await _addTask(newTask);
+                //   },
+                //   tooltip: 'Add task',
+                //   child: const Icon(Icons.add),
+                // ),
+                const SizedBox(height: 12),
+                FloatingActionButton(
+                  heroTag: 'ai',
+                  onPressed: _openAiAssistant,
+                  tooltip: 'AI Assistant',
+                  child: const Icon(Icons.add),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
-    ],
-  ),
-),
-      ],
-    ),
-  );
-}
+    );
+  }
 
 
-/* extracted task-list builder – keeps build() clean */
+/* ------------ BUILD TASK LIST WITH CHECKBOXES ------------ */
 Widget _buildTaskList() {
   return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
     stream: _db
@@ -365,20 +393,56 @@ Widget _buildTaskList() {
         .snapshots(),
     builder: (_, snap) {
       if (snap.hasError) return Center(child: Text('${snap.error}'));
-      if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+      if (!snap.hasData)
+        return const Center(child: CircularProgressIndicator());
 
       final docs = snap.data!.docs;
+
+      // Apply both tag and status filters
       final filtered = docs.where((d) {
-        final t = Task.fromDoc(d);
-        final tagOk = _selectedTag == 'All' || t.tag == _selectedTag;
-        final statusOk = _selectedStatus == t.status;
-        return tagOk && statusOk;
+        final task = Task.fromDoc(d);
+
+        // Tag filter: 'All' or specific tag
+        final tagMatches = _selectedTag == 'All' || task.tag == _selectedTag;
+
+        // Status filter: only show tasks with the selected status
+        final statusMatches = task.status == _selectedStatus;
+
+        return tagMatches && statusMatches;
       }).toList();
 
       if (filtered.isEmpty) {
-        return const Center(
-          child: Text('No tasks match the selected filters',
-              style: TextStyle(color: Colors.white70)),
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                _statusIcon(_selectedStatus),
+                size: 64,
+                color: Colors.grey[400],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No ${_statusName(_selectedStatus)} tasks',
+                style: TextStyle(
+                  fontSize: 18,
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _selectedTag == 'All'
+                    ? 'Try changing filters or add new tasks'
+                    : 'No ${_statusName(_selectedStatus)} tasks with tag "$_selectedTag"',
+                style: TextStyle(
+                  color: Colors.grey[500],
+                  fontSize: 14,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         );
       }
 
@@ -387,14 +451,17 @@ Widget _buildTaskList() {
         itemCount: filtered.length,
         itemBuilder: (_, i) {
           final task = Task.fromDoc(filtered[i]);
+          final docId = filtered[i].id;
+          
           return Dismissible(
             key: Key(task.id),
             background: Container(color: Colors.red),
             onDismissed: (_) => _deleteTask(task.id),
             child: TaskCard(
               task: task,
-              onEdit: () => _showEditSheet(task, filtered[i].id),
+              onEdit: () => _showEditSheet(task, docId),
               onDelete: () => _deleteTask(task.id),
+              onCheck: () => _handleTaskCheck(task, docId), // Add this line
             ),
           );
         },
@@ -403,6 +470,7 @@ Widget _buildTaskList() {
   );
 }
 }
+
 /* =========================================================================
    BOTTOM SHEET  –  NULL-SAFE
    ========================================================================= */
@@ -443,6 +511,8 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
     super.dispose();
   }
 
+  
+
   Future<void> _pickDeadline() async {
     final picked = await showDatePicker(
       context: context,
@@ -454,7 +524,6 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
   }
 
 /* ------------ OPEN FULL-SCREEN AI ASSISTANT ------------ */
-
 
   void _submit() {
     if (_formKey.currentState!.validate()) {

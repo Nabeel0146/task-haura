@@ -45,6 +45,7 @@ class AiScheduler {
 static Future<String> chatSchedule(Task task) async {
   final today = DateTime.now();
   final dateStr = DateFormat('yyyy-MM-dd').format(today);
+  
 
   final blocked = await _blockedSlots(uid: task.uid, day: today);
 
@@ -70,23 +71,19 @@ static Future<String> chatSchedule(Task task) async {
 /* ----------------------------------------------------------
  *  Insert the task at the proposed HH:mm (parse from sentence)
  * ---------------------------------------------------------- */
-static Future<void> insertSingleSlot(Task task, String sentence, DateTime dateTime) async {
+static Future<void> insertSingleSlot(
+  Task task, 
+  DateTime startTime, 
+  DateTime endTime, 
+  {required String userId}
+) async {
   final today = DateTime.now();
   final dateStr = DateFormat('yyyy-MM-dd').format(today);
-
-  // crude regex to pull HH:mm
-  final timeMatch = RegExp(r'(\d{1,2}):(\d{2})').firstMatch(sentence);
-  if (timeMatch == null) return; // silent fail – could show UI error
-
-  final hour = int.parse(timeMatch.group(1)!);
-  final min = int.parse(timeMatch.group(2)!);
-  final start = DateTime(today.year, today.month, today.day, hour, min);
-  final end = start.add(Duration(minutes: task.durationMin));
 
   // read existing schedule
   final schedSnap = await db
       .collection('schedules')
-      .where('uid', isEqualTo: task.uid)
+      .where('uid', isEqualTo: userId) // Use the provided userId
       .where('scheduleDate', isEqualTo: dateStr)
       .orderBy('createdAt', descending: true)
       .limit(1)
@@ -99,10 +96,10 @@ static Future<void> insertSingleSlot(Task task, String sentence, DateTime dateTi
     'id': task.id,
     'title': task.title,
     'durationMin': task.durationMin,
-    'start': DateFormat('HH:mm').format(start),
+    'start': DateFormat('HH:mm').format(startTime),
     'date': dateStr,
     'priority': task.priority.name,
-    'reason': sentence,
+    'reason': 'Scheduled by AI assistant',
     'scheduled': true,
   });
 
@@ -112,7 +109,7 @@ static Future<void> insertSingleSlot(Task task, String sentence, DateTime dateTi
 
   if (schedSnap.docs.isEmpty) {
     await db.collection('schedules').add({
-      'uid': task.uid,
+      'uid': userId, // Use the provided userId
       'scheduleDate': dateStr,
       'orderedTasks': merged,
       'createdAt': FieldValue.serverTimestamp(),
@@ -124,6 +121,7 @@ static Future<void> insertSingleSlot(Task task, String sentence, DateTime dateTi
     });
   }
 }
+
   /* ----------------------------------------------------------
    * 2.  MAIN ENTRY-POINT
    *     -  skips already-scheduled tasks (by ID)

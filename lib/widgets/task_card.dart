@@ -1,21 +1,23 @@
 /* =========================================================================
-   TASK CARD  –  DYNAMIC HEIGHT + BOTTOM ACTION BAR
+   TASK CARD  –  DYNAMIC HEIGHT + BOTTOM ACTION BAR + CHECKBOX
    ========================================================================= */
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:taskhaura/models/task.dart';
-import 'package:taskhaura/screens/ai_chatscreen.dart';
+import 'package:taskhaura/ai/ai_chatscreen.dart';
 
 class TaskCard extends StatelessWidget {
   final Task task;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback onCheck; // Add this callback for checkbox
 
   const TaskCard({
     super.key,
     required this.task,
     required this.onEdit,
     required this.onDelete,
+    required this.onCheck, // Add this required parameter
   });
 
   /* --------------------------------------------------------------- */
@@ -46,6 +48,46 @@ class TaskCard extends StatelessWidget {
       child: Text(
         task.priority.name.toUpperCase(),
         style: TextStyle(fontSize: 11, color: bg, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  /* --------------------------------------------------------------- */
+  /*  CUSTOM CHECKBOX WIDGET                                         */
+  /* --------------------------------------------------------------- */
+  Widget _buildCheckbox() {
+    final bool isCheckable = task.status == TaskStatus.toStart || task.status == TaskStatus.onDoing;
+    
+    return Container(
+      width: 24,
+      height: 24,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: Colors.grey[400]!,
+          width: 2,
+        ),
+      ),
+      child: Theme(
+        data: ThemeData(
+          unselectedWidgetColor: Colors.transparent,
+        ),
+        child: Checkbox(
+          value: task.status == TaskStatus.done,
+          onChanged: isCheckable ? (value) => onCheck() : null,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
+          ),
+          side: BorderSide.none,
+          checkColor: const Color(0xFF74EC7A),
+          fillColor: MaterialStateProperty.resolveWith((states) {
+            if (states.contains(MaterialState.selected)) {
+              return Colors.white;
+            }
+            return Colors.transparent;
+          }),
+        ),
       ),
     );
   }
@@ -104,60 +146,82 @@ class TaskCard extends StatelessWidget {
               ],
 
               /* ----------------------------------------------------- */
-              /*  TITLE  (unconstrained height)                        */
+              /*  TITLE ROW WITH CHECKBOX                             */
               /* ----------------------------------------------------- */
-              Text(
-                task.title,
-                maxLines: null, // allow any number of lines
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Checkbox
+                  Padding(
+                    padding: const EdgeInsets.only(right: 12, top: 2),
+                    child: _buildCheckbox(),
+                  ),
+                  // Title (takes remaining space)
+                  Expanded(
+                    child: Text(
+                      task.title,
+                      maxLines: null, // allow any number of lines
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 6),
 
               /* ----------------------------------------------------- */
               /*  DESCRIPTION                                          */
               /* ----------------------------------------------------- */
-              Text(
-                task.desc,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+              Padding(
+                padding: const EdgeInsets.only(left: 36), // Align with title text (checkbox width + padding)
+                child: Text(
+                  task.desc,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                ),
               ),
               const SizedBox(height: 10),
 
               /* ----------------------------------------------------- */
               /*  BOTTOM BAR :  due-date + actions                     */
               /* ----------------------------------------------------- */
-              Row(
-                children: [
-                  /* due date & duration */
-                  Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
-                  const SizedBox(width: 4),
-                  Text(DateFormat('MMM d').format(task.deadline ?? DateTime.now())),
-                  const SizedBox(width: 12),
-                  Icon(Icons.schedule, size: 14, color: Colors.grey[600]),
-                  const SizedBox(width: 4),
-                  Text('${task.durationMin} min'),
-                  const Spacer(),
+              Padding(
+                padding: const EdgeInsets.only(left: 36), // Align with title text
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    /* due date & duration */
+                    Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
+                    const SizedBox(width: 4),
+                    Text(DateFormat('MMM d').format(task.deadline ?? DateTime.now())),
+                    const SizedBox(width: 12),
+                    
+                   
 
-                  /* priority chip */
-                  _priorityChip(),
-                  const SizedBox(width: 8),
+                    /* priority chip */
+                    _priorityChip(),
+                    const SizedBox(width: 8),
 
-                  /* action buttons */
-                  _IconBtn(
-                    icon: Icons.smart_toy,
-                    color: const Color(0xFF74EC7A),
-                    onTap: () => _openAiChat(context),
-                  ),
-                  const SizedBox(width: 4),
-                  _IconBtn(icon: Icons.edit_outlined, onTap: onEdit),
-                  const SizedBox(width: 4),
-                  _IconBtn(
-                    icon: Icons.delete_outline,
-                    color: Colors.red,
-                    onTap: () => _confirmDelete(context),
-                  ),
-                ],
+                    /* action buttons */
+                    Row(
+                      children: [
+                        _IconBtn(
+                      icon: Icons.smart_toy,
+                      color: const Color(0xFF74EC7A),
+                      onTap: () => _openAiChat(context),
+                    ),
+                    const SizedBox(width: 4),
+                    _IconBtn(icon: Icons.edit_outlined, onTap: onEdit),
+                    const SizedBox(width: 4),
+                    _IconBtn(
+                      icon: Icons.delete_outline,
+                      color: Colors.red,
+                      onTap: () => _confirmDelete(context),
+                    ),
+                      ],
+                    )
+                  ],
+                ),
               ),
             ],
           ),
