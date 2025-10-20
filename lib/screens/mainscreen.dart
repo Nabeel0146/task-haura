@@ -18,7 +18,7 @@ class _MainScreenState extends State<MainScreen> {
   final List<Widget> _pages = const [
     HomePage(),
     SchedulePage(), // nullable tasks – shows empty state
-    Productivitypage(),
+    ProductivityPage(),
     SettingsPage(),
   ];
 
