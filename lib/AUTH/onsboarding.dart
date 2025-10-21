@@ -17,8 +17,10 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
   // User data to collect
   String _workType = '';
-  TimeOfDay? _startTime;
-  TimeOfDay? _endTime;
+  TimeOfDay? _workStartTime;
+  TimeOfDay? _workEndTime;
+  TimeOfDay? _sleepTime; // Bedtime
+  TimeOfDay? _wakeUpTime; // Wake-up time
   String _focusStyle = '';
   List<String> _interests = [];
   String _productivityGoal = '';
@@ -86,15 +88,52 @@ class _OnboardingPageState extends State<OnboardingPage> {
     }
   }
 
+  /* ---------- Work Type Selection Handler ---------- */
+  void _handleWorkTypeSelection(String type) {
+    setState(() {
+      _workType = type;
+      
+      // Set default working hours based on work type
+      switch (type) {
+        case 'Full-time Employee':
+          _workStartTime = const TimeOfDay(hour: 9, minute: 0);
+          _workEndTime = const TimeOfDay(hour: 17, minute: 0);
+          break;
+        case 'Student':
+          _workStartTime = const TimeOfDay(hour: 9, minute: 0);
+          _workEndTime = const TimeOfDay(hour: 17, minute: 0);
+          break;
+        case 'Part-time Worker':
+          _workStartTime = const TimeOfDay(hour: 12, minute: 0);
+          _workEndTime = const TimeOfDay(hour: 17, minute: 0);
+          break;
+        case 'Freelancer':
+        case 'Entrepreneur':
+        case 'Remote Worker':
+        case 'Other':
+          // Keep existing times if already set, otherwise leave as null for flexible
+          break;
+      }
+    });
+  }
+
   /* ---------- Time Picker ---------- */
-  Future<void> _pickTime(bool isStart) async {
-    final initial = isStart
-        ? (_startTime ?? const TimeOfDay(hour: 9, minute: 0))
-        : (_endTime ?? const TimeOfDay(hour: 17, minute: 0));
+  Future<void> _pickTime(bool isStart, bool isWorkTime) async {
+    TimeOfDay? initialTime;
+    
+    if (isWorkTime) {
+      initialTime = isStart
+          ? (_workStartTime ?? const TimeOfDay(hour: 9, minute: 0))
+          : (_workEndTime ?? const TimeOfDay(hour: 17, minute: 0));
+    } else {
+      initialTime = isStart
+          ? (_sleepTime ?? const TimeOfDay(hour: 22, minute: 0)) // Default bedtime 10 PM
+          : (_wakeUpTime ?? const TimeOfDay(hour: 6, minute: 0)); // Default wake-up 6 AM
+    }
     
     final picked = await showTimePicker(
       context: context,
-      initialTime: initial,
+      initialTime: initialTime,
       builder: (context, child) {
         return Theme(
           data: ThemeData.light().copyWith(
@@ -109,10 +148,18 @@ class _OnboardingPageState extends State<OnboardingPage> {
     
     if (picked != null) {
       setState(() {
-        if (isStart) {
-          _startTime = picked;
+        if (isWorkTime) {
+          if (isStart) {
+            _workStartTime = picked;
+          } else {
+            _workEndTime = picked;
+          }
         } else {
-          _endTime = picked;
+          if (isStart) {
+            _sleepTime = picked;
+          } else {
+            _wakeUpTime = picked;
+          }
         }
       });
     }
@@ -123,9 +170,13 @@ class _OnboardingPageState extends State<OnboardingPage> {
     setState(() => _isLoading = true);
 
     try {
-      final workingHours = _startTime != null && _endTime != null
-          ? '${_formatTime(_startTime!)} – ${_formatTime(_endTime!)}'
+      final workingHours = _workStartTime != null && _workEndTime != null
+          ? '${_formatTime(_workStartTime!)} – ${_formatTime(_workEndTime!)}'
           : 'Flexible';
+
+      final sleepSchedule = _sleepTime != null && _wakeUpTime != null
+          ? '${_formatTime(_sleepTime!)} – ${_formatTime(_wakeUpTime!)}'
+          : 'Not set';
 
       // Store all user preferences in Firestore
       await FirebaseFirestore.instance
@@ -134,14 +185,16 @@ class _OnboardingPageState extends State<OnboardingPage> {
           .update({
         'workType': _workType,
         'workingHours': workingHours,
+        'sleepSchedule': sleepSchedule, // Add sleep schedule to Firestore
         'focusStyle': _focusStyle,
         'interests': _interests,
         'productivityGoal': _productivityGoal,
         'onboardingCompleted': true,
-        'tags': _interests, // Use interests as initial tags for task categorization
+        'tags': _interests,
         'preferences': {
           'workType': _workType,
           'workingHours': workingHours,
+          'sleepSchedule': sleepSchedule, // Add sleep schedule to preferences
           'focusStyle': _focusStyle,
           'productivityGoal': _productivityGoal,
           'interests': _interests,
@@ -167,10 +220,18 @@ class _OnboardingPageState extends State<OnboardingPage> {
   }
 
   String _formatTime(TimeOfDay time) {
-    final hour = time.hourOfPeriod;
+    final hour = time.hour;
     final minute = time.minute.toString().padLeft(2, '0');
-    final period = time.period == DayPeriod.am ? 'AM' : 'PM';
-    return '$hour:$minute $period';
+    
+    if (hour == 0) {
+      return '12:$minute AM';
+    } else if (hour < 12) {
+      return '$hour:$minute AM';
+    } else if (hour == 12) {
+      return '12:$minute PM';
+    } else {
+      return '${hour - 12}:$minute PM';
+    }
   }
 
   /* ---------- Page Content ---------- */
@@ -219,7 +280,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  onPressed: () => setState(() => _workType = type),
+                  onPressed: () => _handleWorkTypeSelection(type),
                   child: Text(
                     type,
                     style: const TextStyle(fontSize: 16),
@@ -228,200 +289,244 @@ class _OnboardingPageState extends State<OnboardingPage> {
               );
             }).toList(),
           ),
-        ],
-      ),
-    );
-  }
-
- Widget _buildPage2() {
-  return SingleChildScrollView(
-    padding: const EdgeInsets.only(bottom: 20),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 20),
-        _buildProgressIndicator(),
-        const SizedBox(height: 40),
-        const Text(
-          'What\'s your typical sleep schedule?',
-          style: TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'This helps us respect your rest time and optimize your waking hours',
-          style: TextStyle(
-            fontSize: 16,
-            color: Colors.grey[600],
-          ),
-        ),
-        const SizedBox(height: 40),
-        
-        // Sleep Schedule
-        Column(
-          children: [
-            // Sleep Time Selection
-            Row(
-              children: [
-                Expanded(
-                  child: _buildSleepTimeCard('Bedtime', _startTime, true),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _buildSleepTimeCard('Wake-up Time', _endTime, false),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            
-            // Sleep Quality Note
+          
+          // Show selected working hours if applicable
+          if (_workType.isNotEmpty && _workStartTime != null && _workEndTime != null) ...[
+            const SizedBox(height: 20),
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: const Color(0xFF74EC7A).withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF74EC7A).withOpacity(0.3)),
               ),
               child: Row(
                 children: [
                   Icon(
-                    Icons.nightlight_round,
+                    Icons.access_time,
+                    color: const Color(0xFF74EC7A),
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Default working hours set for $_workType',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        Text(
+                          '${_formatTime(_workStartTime!)} – ${_formatTime(_workEndTime!)}',
+                          style: const TextStyle(
+                            color: Color(0xFF74EC7A),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPage2() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 20),
+          _buildProgressIndicator(),
+          const SizedBox(height: 40),
+          const Text(
+            'What\'s your typical sleep schedule?',
+            style: TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'This helps us respect your rest time and optimize your waking hours',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey[600],
+            ),
+          ),
+          const SizedBox(height: 40),
+          
+          // Sleep Schedule
+          Column(
+            children: [
+              // Sleep Time Selection
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildSleepTimeCard('Bedtime', _sleepTime, true),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildSleepTimeCard('Wake-up Time', _wakeUpTime, false),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              
+              // Sleep Quality Note
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF74EC7A).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF74EC7A).withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.nightlight_round,
+                      color: const Color(0xFF74EC7A),
+                      size: 24,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'We\'ll avoid scheduling tasks during your sleep hours to protect your rest',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[700],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 32),
+              
+              // Focus Style
+              const Text(
+                'How do you prefer to work?',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'This helps us structure your tasks effectively',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 16),
+              
+              Column(
+                children: _focusStyles.map((style) {
+                  return Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _focusStyle == style ? Colors.white : const Color(0xFF74EC7A),
+                        backgroundColor: _focusStyle == style ? const Color(0xFF74EC7A) : Colors.transparent,
+                        side: BorderSide(
+                          color: _focusStyle == style ? const Color(0xFF74EC7A) : Colors.grey[300]!,
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: () => setState(() => _focusStyle = style),
+                      child: Text(
+                        style,
+                        style: const TextStyle(fontSize: 14),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSleepTimeCard(String label, TimeOfDay? time, bool isBedtime) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _pickTime(isBedtime, false), // false = sleep time, not work time
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    isBedtime ? Icons.nightlight_round : Icons.wb_sunny_outlined,
                     color: const Color(0xFF74EC7A),
                     size: 24,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'We\'ll avoid scheduling tasks during your sleep hours to protect your rest',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[700],
+                      label,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
                       ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF74EC7A).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      Icons.access_time,
+                      color: Color(0xFF74EC7A),
+                      size: 20,
                     ),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 32),
-            
-            // Focus Style
-            const Text(
-              'How do you prefer to work?',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'This helps us structure your tasks effectively',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey[600],
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            Column(
-              children: _focusStyles.map((style) {
-                return Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: _focusStyle == style ? Colors.white : const Color(0xFF74EC7A),
-                      backgroundColor: _focusStyle == style ? const Color(0xFF74EC7A) : Colors.transparent,
-                      side: BorderSide(
-                        color: _focusStyle == style ? const Color(0xFF74EC7A) : Colors.grey[300]!,
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    onPressed: () => setState(() => _focusStyle = style),
-                    child: Text(
-                      style,
-                      style: const TextStyle(fontSize: 14),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
-}
-
-Widget _buildSleepTimeCard(String label, TimeOfDay? time, bool isBedtime) {
-  return Card(
-    elevation: 2,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(16),
-    ),
-    child: InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: () => _pickTime(isBedtime),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  isBedtime ? Icons.nightlight_round : Icons.wb_sunny_outlined,
-                  color: const Color(0xFF74EC7A),
-                  size: 24,
+              const SizedBox(height: 8),
+              Text(
+                time != null ? _formatTime(time) : 'Tap to set time',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w500,
+                  color: time != null ? const Color(0xFF74EC7A) : Colors.grey,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF74EC7A).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.access_time,
-                    color: Color(0xFF74EC7A),
-                    size: 20,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              time != null ? _formatTime(time) : 'Tap to set time',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w500,
-                color: time != null ? const Color(0xFF74EC7A) : Colors.grey,
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
+  // ... Rest of the code (_buildPage3, _buildPage4, etc. remains the same)
   Widget _buildPage3() {
     return SingleChildScrollView(
       padding: const EdgeInsets.only(bottom: 20),
@@ -570,36 +675,6 @@ Widget _buildSleepTimeCard(String label, TimeOfDay? time, bool isBedtime) {
             }).toList(),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildTimeCard(String label, TimeOfDay? time, bool isStart) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: Icon(
-          isStart ? Icons.sunny : Icons.nightlight_round,
-          color: const Color(0xFF74EC7A),
-        ),
-        title: Text(
-          label,
-          style: const TextStyle(fontSize: 14, color: Colors.grey),
-        ),
-        subtitle: Text(
-          time != null ? _formatTime(time) : 'Not set',
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-            color: Colors.black87,
-          ),
-        ),
-        trailing: const Icon(Icons.access_time, color: Color(0xFF74EC7A)),
-        onTap: () => _pickTime(isStart),
       ),
     );
   }

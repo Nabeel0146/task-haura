@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:taskhaura/models/task.dart'; // <-- adjust to your path
+import 'package:taskhaura/models/task.dart';
 
 class AddTaskPage extends StatefulWidget {
   final String uid;
@@ -22,14 +22,11 @@ class _AddTaskPageState extends State<AddTaskPage> {
   DateTime _deadline = DateTime.now().add(const Duration(days: 1));
   Priority _priority = Priority.medium;
   TaskStatus _status = TaskStatus.toStart;
-  String _selectedTag = ''; // empty = "No tag"
+  String _selectedTag = '';
 
   List<String> _userTags = [];
-  bool _loadingTags = true; // NEW: guard against premature submit
+  bool _loadingTags = true;
 
-  /* ---------------------------------------------------------- */
-  /* Lifecycle                                                  */
-  /* ---------------------------------------------------------- */
   @override
   void initState() {
     super.initState();
@@ -45,13 +42,12 @@ class _AddTaskPageState extends State<AddTaskPage> {
     super.dispose();
   }
 
-  /* ---------------------------------------------------------- */
-  /* Tags handling                                              */
-  /* ---------------------------------------------------------- */
   Future<void> _loadTags() async {
     try {
-      final snap =
-          await FirebaseFirestore.instance.collection('users').doc(widget.uid).get();
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.uid)
+          .get();
       final List<dynamic> tags = snap.data()?['tags'] ?? [];
       if (mounted) {
         setState(() {
@@ -71,12 +67,9 @@ class _AddTaskPageState extends State<AddTaskPage> {
       SetOptions(merge: true),
     );
     _newTagCtrl.clear();
-    await _loadTags(); // refresh chips
+    await _loadTags();
   }
 
-  /* ---------------------------------------------------------- */
-  /* Date picker                                                */
-  /* ---------------------------------------------------------- */
   Future<void> _pickDeadline() async {
     final picked = await showDatePicker(
       context: context,
@@ -84,14 +77,13 @@ class _AddTaskPageState extends State<AddTaskPage> {
       firstDate: DateTime.now(),
       lastDate: DateTime.now().add(const Duration(days: 365)),
     );
-    if (picked != null) setState(() => _deadline = picked);
+    if (picked != null && mounted) {
+      setState(() => _deadline = picked);
+    }
   }
 
-  /* ---------------------------------------------------------- */
-  /* Submit                                                     */
-  /* ---------------------------------------------------------- */
   void _submit() {
-    if (_loadingTags) return; // still loading – ignore tap
+    if (_loadingTags) return;
     if (_formKey.currentState!.validate()) {
       final task = Task(
         title: _titleCtrl.text.trim(),
@@ -107,90 +99,182 @@ class _AddTaskPageState extends State<AddTaskPage> {
     }
   }
 
-  
-
-  /* ---------------------------------------------------------- */
-  /* Add-tag dialog                                             */
-  /* ---------------------------------------------------------- */
   Future<void> _showAddTagDialog() async {
     return showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Add new tag'),
+        title: const Text('Add New Tag',
+            style: TextStyle(fontWeight: FontWeight.w600)),
         content: TextField(
           controller: _newTagCtrl,
-          decoration: const InputDecoration(hintText: 'Tag name'),
+          decoration: InputDecoration(
+            hintText: 'Enter tag name',
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 12,
+            ),
+          ),
           autofocus: true,
         ),
         actions: [
           TextButton(
-            onPressed: Navigator.of(_).pop,
-            child: const Text('CANCEL'),
+            onPressed: () => Navigator.of(_).pop(),
+            child: const Text('Cancel'),
           ),
-          TextButton(
+          ElevatedButton(
             onPressed: () {
               Navigator.of(_).pop();
               _addTag(_newTagCtrl.text);
             },
-            child: const Text('ADD'),
+            child: const Text('Add'),
           ),
         ],
       ),
     );
   }
 
-  /* ---------------------------------------------------------- */
-  /* UI – Tag chips                                             */
-  /* ---------------------------------------------------------- */
   Widget _buildTagChips() {
     if (_loadingTags) {
-      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
-    }
-    if (_userTags.isEmpty) {
-      return Center(
-        child: TextButton.icon(
-          icon: const Icon(Icons.add),
-          label: const Text('Add your first tag'),
-          onPressed: _showAddTagDialog,
+      return const Center(
+        child: SizedBox(
+          height: 24,
+          width: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
       );
     }
 
-    return Wrap(
-      spacing: 8,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ChoiceChip(
-          label: const Text('No tag'),
-          selected: _selectedTag == '',
-          selectedColor: Colors.blue.shade100,
-          onSelected: (_) => setState(() => _selectedTag = ''),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            // No tag option
+            FilterChip(
+              label: Text(
+                'No tag',
+                style: TextStyle(
+                  color: _selectedTag == '' ? Colors.white : Colors.grey[700],
+                ),
+              ),
+              selected: _selectedTag == '',
+              selectedColor: Theme.of(context).primaryColor,
+              checkmarkColor: Colors.white,
+              backgroundColor: Colors.grey[100],
+              onSelected: (_) => setState(() => _selectedTag = ''),
+            ),
+            // User tags
+            ..._userTags.map(
+              (t) => FilterChip(
+                label: Text(
+                  t,
+                  style: TextStyle(
+                    color: _selectedTag == t ? Colors.white : Colors.grey[700],
+                  ),
+                ),
+                selected: _selectedTag == t,
+                selectedColor: Theme.of(context).primaryColor,
+                checkmarkColor: Colors.white,
+                backgroundColor: Colors.grey[100],
+                onSelected: (_) => setState(() => _selectedTag = t),
+              ),
+            ),
+            // Add tag chip
+            InputChip(
+              label: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add, size: 16, color: Colors.grey[600]),
+                  const SizedBox(width: 4),
+                  Text(
+                    'New Tag',
+                    style: TextStyle(color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.grey[50],
+              onPressed: _showAddTagDialog,
+            ),
+          ],
         ),
-        ..._userTags.map(
-          (t) => ChoiceChip(
-            label: Text(t),
-            selected: _selectedTag == t,
-            selectedColor: Colors.blue.shade100,
-            onSelected: (_) => setState(() => _selectedTag = t),
+        if (_userTags.isEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            'No tags yet. Add some to organize your tasks better!',
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 12,
+            ),
           ),
-        ),
-        ActionChip(
-          label: const Icon(Icons.add, size: 18),
-          onPressed: _showAddTagDialog,
-        ),
+        ],
       ],
     );
   }
 
-  /* ---------------------------------------------------------- */
-  /* Main build                                                 */
-  /* ---------------------------------------------------------- */
+  Widget _buildFormField({
+    required String label,
+    required Widget child,
+    String? helperText,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 8),
+        child,
+        if (helperText != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            helperText,
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 12,
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Add new task'),
+        title: const Text(
+          'Create New Task',
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 20,
+          ),
+        ),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        elevation: 0,
+        foregroundColor: Colors.black,
         actions: [
-          IconButton(icon: const Icon(Icons.save), onPressed: _submit),
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: FilledButton.icon(
+              icon: const Icon(Icons.save, size: 20),
+              label: const Text('Save'),
+              onPressed: _submit,
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              ),
+            ),
+          ),
         ],
       ),
       body: Form(
@@ -200,66 +284,217 @@ class _AddTaskPageState extends State<AddTaskPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              TextFormField(
-                controller: _titleCtrl,
-                decoration: const InputDecoration(labelText: 'Title'),
-                validator: (v) => v!.trim().isEmpty ? 'Required' : null,
+              // Title Field
+              _buildFormField(
+                label: 'Task Title *',
+                child: TextFormField(
+                  controller: _titleCtrl,
+                  decoration: InputDecoration(
+                    hintText: 'Enter task title',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
+                  validator: (v) => v!.trim().isEmpty ? 'Title is required' : null,
+                ),
               ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _descCtrl,
-                decoration: const InputDecoration(labelText: 'Description'),
-                maxLines: 3,
-                validator: (v) => v!.trim().isEmpty ? 'Required' : null,
+
+              // Description Field
+              _buildFormField(
+                label: 'Description *',
+                child: TextFormField(
+                  controller: _descCtrl,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    hintText: 'Describe your task...',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
+                  validator: (v) => v!.trim().isEmpty ? 'Description is required' : null,
+                ),
               ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _durationCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                    labelText: 'Duration', suffixText: 'minutes'),
-                validator: (v) =>
-                    v == null || int.tryParse(v) == null ? 'Invalid number' : null,
+
+              // Duration Field
+              _buildFormField(
+                label: 'Duration *',
+                helperText: 'Estimated time needed in minutes',
+                child: TextFormField(
+                  controller: _durationCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    hintText: 'e.g., 30',
+                    suffixText: 'minutes',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
+                  validator: (v) =>
+                      v == null || int.tryParse(v) == null ? 'Please enter a valid number' : null,
+                ),
               ),
-              const SizedBox(height: 16),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(DateFormat('EEE, MMM d, yyyy').format(_deadline)),
-                trailing: const Icon(Icons.calendar_today),
-                onTap: _pickDeadline,
+
+              // Deadline Picker
+              _buildFormField(
+                label: 'Deadline',
+                child: InkWell(
+                  onTap: _pickDeadline,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.calendar_today,
+                          color: Theme.of(context).primaryColor,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          DateFormat('EEE, MMM d, yyyy').format(_deadline),
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                        const Spacer(),
+                        Text(
+                          'Change',
+                          style: TextStyle(
+                            color: Theme.of(context).primaryColor,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<Priority>(
-                value: _priority,
-                items: Priority.values
-                    .map((p) => DropdownMenuItem(value: p, child: Text(p.name)))
-                    .toList(),
-                onChanged: (v) => setState(() => _priority = v!),
-                decoration: const InputDecoration(labelText: 'Priority'),
+
+              // Priority Dropdown
+              _buildFormField(
+                label: 'Priority',
+                child: DropdownButtonFormField<Priority>(
+                  value: _priority,
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
+                  items: Priority.values.map((p) {
+                    Color color;
+                    switch (p) {
+                      case Priority.high:
+                        color = Colors.red;
+                      case Priority.medium:
+                        color = Colors.orange;
+                      case Priority.low:
+                        color = Colors.green;
+                    }
+                    return DropdownMenuItem(
+                      value: p,
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: color,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            p.name.toUpperCase(),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w500,
+                              color: color,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setState(() => _priority = v!),
+                ),
               ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<TaskStatus>(
-                value: _status,
-                items: TaskStatus.values.map((s) {
-                  String pretty = s.name
-                      .replaceAll('toStart', 'to start')
-                      .replaceAll('onDoing', 'on doing');
-                  return DropdownMenuItem(value: s, child: Text(pretty));
-                }).toList(),
-                onChanged: (v) => setState(() => _status = v!),
-                decoration: const InputDecoration(labelText: 'Status'),
+
+              // Status Dropdown
+              _buildFormField(
+                label: 'Status',
+                child: DropdownButtonFormField<TaskStatus>(
+                  value: _status,
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
+                  items: TaskStatus.values.map((s) {
+                    String pretty = s.name
+                        .replaceAll('toStart', 'To Start')
+                        .replaceAll('onDoing', 'In Progress')
+                        .replaceAll('completed', 'Completed');
+                    return DropdownMenuItem(
+                      value: s,
+                      child: Text(pretty),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setState(() => _status = v!),
+                ),
               ),
-              const SizedBox(height: 16),
-              const Text('Tag', style: TextStyle(fontSize: 16)),
-              const SizedBox(height: 8),
-              _buildTagChips(),
-              const SizedBox(height: 32),
+
+              // Tags Section
+              _buildFormField(
+                label: 'Tags',
+                helperText: 'Organize your tasks with tags',
+                child: _buildTagChips(),
+              ),
+
+              const SizedBox(height: 24),
+
+              // Create Task Button
               SizedBox(
-                width: double.infinity,
+                height: 54,
                 child: FilledButton.icon(
-                  icon: const Icon(Icons.add),
-                  label: const Text('CREATE TASK'),
+                  icon: const Icon(Icons.add_task, size: 24),
+                  label: const Text(
+                    'CREATE TASK',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   onPressed: _submit,
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
                 ),
               ),
             ],

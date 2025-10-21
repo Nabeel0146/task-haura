@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,15 +10,13 @@ import '../main.dart'; // for gemini instance
 class AiSchedulePage extends StatefulWidget {
   final Task task;
   final List<Task> userTasks;
-  final String? userWorkingHours;
-  final String? userTags;
+  final Map<String, dynamic>? userPreferences;
 
   const AiSchedulePage({
     super.key,
     required this.task,
     this.userTasks = const [],
-    this.userWorkingHours,
-    this.userTags,
+    this.userPreferences,
   });
 
   @override
@@ -27,27 +27,32 @@ class _SchedulePageState extends State<AiSchedulePage> {
   final List<Map<String, dynamic>> _history = [];
   bool _thinking = false;
   String? _userId;
+  Map<String, dynamic>? _userPreferences;
 
   /* ---------- life-cycle ---------- */
   @override
   void initState() {
     super.initState();
-    _loadUserId();
+    _loadUserData();
     _addWelcome();
     _scheduleSingleTask();
   }
 
-  Future<void> _loadUserId() async {
+  Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _userId = prefs.getString('userId');
+      _userPreferences = widget.userPreferences ?? 
+          (prefs.getString('userPreferences') != null 
+              ? Map<String, dynamic>.from(jsonDecode(prefs.getString('userPreferences')!))
+              : null);
     });
   }
 
   void _addWelcome() {
     _history.add({
       'role': 'assistant',
-      'text': 'Let\'s find the best schedule for your task!',
+      'text': 'Let\'s find the best schedule for your task considering your preferences!',
     });
   }
 
@@ -115,6 +120,37 @@ class _SchedulePageState extends State<AiSchedulePage> {
                 DateFormat('MMM d').format(widget.task.deadline ?? DateTime.now())),
             ],
           ),
+          // Show user preferences if available
+          if (_userPreferences != null) ...[
+            const SizedBox(height: 8),
+            _buildUserPreferences(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUserPreferences() {
+    final prefs = _userPreferences!;
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF74EC7A).withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.settings, size: 16, color: Colors.grey[600]),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Preferences: ${prefs['workType'] ?? 'Flexible'} • ${prefs['focusStyle']?.toString().split(' ').first ?? 'Flexible'}',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -163,8 +199,11 @@ class _SchedulePageState extends State<AiSchedulePage> {
   Future<void> _scheduleSingleTask() async {
     setState(() => _thinking = true);
     
-    // Use the default AiScheduler prompt
-    final raw = await AiScheduler.chatSchedule(widget.task);
+    // Pass user preferences to the scheduler
+    final raw = await AiScheduler.chatSchedule(
+      widget.task, 
+      userPreferences: _userPreferences
+    );
     final reply = _to12(raw);
     _handleSlotReply(reply);
   }
@@ -225,26 +264,36 @@ class _SchedulePageState extends State<AiSchedulePage> {
 
   /* ---------- confirm ---------- */
   Future<void> _confirmSlot(Map<String, DateTime> slot) async {
-    // Ensure userId is loaded before proceeding
     if (_userId == null) {
-      await _loadUserId();
+      await _loadUserData();
     }
     
-    if (_userId != null) {
-      await AiScheduler.insertSingleSlot(
-        widget.task,
-        slot['start']!,
-        slot['end']!,
-        userId: _userId!,
-      );
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Task scheduled successfully! ✅')),
-      );
+    // Use the task's uid if _userId is still null
+    final userId = _userId ?? widget.task.uid;
+    
+    if (userId.isNotEmpty) {
+      try {
+        await AiScheduler.insertSingleSlot(
+          widget.task,
+          slot['start']!,
+          slot['end']!,
+          userId: userId,
+        );
+        if (!mounted) return;
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Task scheduled successfully! ✅')),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error scheduling task: $e')),
+        );
+      }
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Error: User not found')),
+        const SnackBar(content: Text('Error: User ID not found')),
       );
     }
   }
