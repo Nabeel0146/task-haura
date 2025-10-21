@@ -138,86 +138,22 @@ class AiScheduler {
       // Get task tags from Firestore
       final taskTags = await _getTaskTags(task.id, task.uid);
       
-      // Get user data including interests and tags
-      final userData = await _getUserData(task.uid);
-      final userInterests = userData?['interests'] as List<dynamic>?;
-      final userTags = userData?['tags'] as List<dynamic>?;
-
-      // Work-related identifiers
-      final workTaskTags = ['work', 'work projects', 'college', 'student', 'office', 'job', 'professional'];
-      final workUserInterests = ['Work Projects', 'Learning & Education'];
-      
       dev.log('🔍 Work classification analysis:', name: 'AiScheduler');
       dev.log('   - Task tags: $taskTags', name: 'AiScheduler');
-      dev.log('   - User interests: $userInterests', name: 'AiScheduler');
-      dev.log('   - User tags: $userTags', name: 'AiScheduler');
-      dev.log('   - Work keywords: $workTaskTags', name: 'AiScheduler');
-      dev.log('   - Work interests: $workUserInterests', name: 'AiScheduler');
 
-      // Check 1: Task has work-related tags
+      // Check 1: Task has EXACT "work" tag (case-insensitive)
       if (taskTags != null && taskTags.isNotEmpty) {
         for (final tag in taskTags) {
-          for (final workTag in workTaskTags) {
-            if (tag.contains(workTag) || workTag.contains(tag)) {
-              dev.log('✅ Task identified as WORK: Has work tag "$tag"', name: 'AiScheduler');
-              return true;
-            }
+          final tagStr = tag.toString().toLowerCase().trim();
+          if (tagStr == 'work') {
+            dev.log('✅ Task identified as WORK: Has exact "work" tag', name: 'AiScheduler');
+            return true;
           }
         }
-        dev.log('❌ No work-related tags found in task', name: 'AiScheduler');
+        dev.log('❌ No exact "work" tag found in task', name: 'AiScheduler');
       } else {
         dev.log('❌ No task tags found', name: 'AiScheduler');
       }
-
-      // Check 2: User has work-related interests
-      if (userInterests != null && userInterests.isNotEmpty) {
-        for (final interest in userInterests) {
-          final interestStr = interest.toString().toLowerCase();
-          for (final workInterest in workUserInterests) {
-            if (interestStr.contains(workInterest.toLowerCase()) || 
-                workInterest.toLowerCase().contains(interestStr)) {
-              dev.log('✅ Task identified as WORK: User has work interest "$interest"', name: 'AiScheduler');
-              return true;
-            }
-          }
-        }
-        dev.log('❌ No work-related interests found in user data', name: 'AiScheduler');
-      } else {
-        dev.log('❌ No user interests found', name: 'AiScheduler');
-      }
-
-      // Check 3: User has work-related tags
-      if (userTags != null && userTags.isNotEmpty) {
-        for (final tag in userTags) {
-          final tagStr = tag.toString().toLowerCase();
-          for (final workTag in workTaskTags) {
-            if (tagStr.contains(workTag) || workTag.contains(tagStr)) {
-              dev.log('✅ Task identified as WORK: User has work tag "$tag"', name: 'AiScheduler');
-              return true;
-            }
-          }
-        }
-        dev.log('❌ No work-related tags found in user data', name: 'AiScheduler');
-      } else {
-        dev.log('❌ No user tags found', name: 'AiScheduler');
-      }
-
-      // Check 4: Fallback - check task title/description for work keywords
-      final title = task.title.toLowerCase();
-      final desc = task.desc.toLowerCase();
-      final workKeywords = ['work', 'college', 'office', 'job', 'project', 'meeting', 'client', 'professional'];
-      
-      dev.log('🔍 Checking title/description for work keywords:', name: 'AiScheduler');
-      dev.log('   - Title (lowercase): $title', name: 'AiScheduler');
-      dev.log('   - Description (lowercase): $desc', name: 'AiScheduler');
-      
-      for (final keyword in workKeywords) {
-        if (title.contains(keyword) || desc.contains(keyword)) {
-          dev.log('✅ Task identified as WORK: Contains keyword "$keyword"', name: 'AiScheduler');
-          return true;
-        }
-      }
-      dev.log('❌ No work keywords found in title/description', name: 'AiScheduler');
 
       dev.log('🎯 FINAL DECISION: Task identified as PERSONAL', name: 'AiScheduler');
       return false;
@@ -229,140 +165,303 @@ class AiScheduler {
   }
 
   /* ----------------------------------------------------------
-   * 5. Get blocked slots from existing schedule
+   * 5. Get scheduled slots for multiple days
    * ---------------------------------------------------------- */
-  static Future<List<_BlockedSlot>> _blockedSlots({
+  static Future<Map<DateTime, List<_TimeSlot>>> _getScheduledSlots({
     required String uid,
-    required DateTime day,
+    required DateTime startDate,
+    required int daysToCheck,
   }) async {
-    dev.log('🔍 Fetching blocked slots for UID: $uid, Date: ${DateFormat('yyyy-MM-dd').format(day)}', name: 'AiScheduler');
+    dev.log('🔍 Fetching scheduled slots for $daysToCheck days starting from ${DateFormat('yyyy-MM-dd').format(startDate)}', name: 'AiScheduler');
     
-    final snap = await FirebaseFirestore.instance
-        .collection('schedules')
-        .where('uid', isEqualTo: uid)
-        .where('scheduleDate', isEqualTo: DateFormat('yyyy-MM-dd').format(day))
-        .orderBy('createdAt', descending: true)
-        .limit(1)
-        .get();
+    final scheduledSlots = <DateTime, List<_TimeSlot>>{};
+    
+    for (int i = 0; i < daysToCheck; i++) {
+      final currentDate = startDate.add(Duration(days: i));
+      final dateStr = DateFormat('yyyy-MM-dd').format(currentDate);
+      
+      final snap = await FirebaseFirestore.instance
+          .collection('schedules')
+          .where('uid', isEqualTo: uid)
+          .where('scheduleDate', isEqualTo: dateStr)
+          .orderBy('createdAt', descending: true)
+          .limit(1)
+          .get();
 
-    if (snap.docs.isEmpty) {
-      dev.log('✅ No existing blocked slots found', name: 'AiScheduler');
-      return [];
+      if (snap.docs.isNotEmpty) {
+        final slots = (snap.docs.first.data()['orderedTasks'] as List<dynamic>)
+            .map((json) {
+          final date = DateFormat('yyyy-MM-dd').parseUtc(json['date']).toLocal();
+          final start = DateFormat('HH:mm').parseUtc(json['start']).toLocal();
+          final realStart = DateTime(date.year, date.month, date.day, start.hour, start.minute);
+          final dur = json['durationMin'] as int;
+          final slot = _TimeSlot(
+            start: realStart,
+            end: realStart.add(Duration(minutes: dur)),
+            taskId: json['id'] as String,
+          );
+          return slot;
+        }).toList();
+        
+        scheduledSlots[currentDate] = slots;
+        dev.log('   - ${dateStr}: ${slots.length} scheduled tasks', name: 'AiScheduler');
+      } else {
+        scheduledSlots[currentDate] = [];
+        dev.log('   - ${dateStr}: No scheduled tasks', name: 'AiScheduler');
+      }
     }
 
-    final blockedSlots = (snap.docs.first.data()['orderedTasks'] as List<dynamic>)
-        .map((json) {
-      final date = DateFormat('yyyy-MM-dd').parseUtc(json['date']).toLocal();
-      final start = DateFormat('HH:mm').parseUtc(json['start']).toLocal();
-      final realStart = DateTime(date.year, date.month, date.day, start.hour, start.minute);
-      final dur = json['durationMin'] as int;
-      final slot = _BlockedSlot(
-        start: realStart,
-        end: realStart.add(Duration(minutes: dur + 15)), // incl. break
-      );
-      dev.log('   - Blocked: ${DateFormat('HH:mm').format(slot.start)}-${DateFormat('HH:mm').format(slot.end)}', name: 'AiScheduler');
-      return slot;
-    }).toList();
-
-    dev.log('✅ Found ${blockedSlots.length} blocked slots', name: 'AiScheduler');
-    return blockedSlots;
+    return scheduledSlots;
   }
 
   /* ----------------------------------------------------------
-   * 6. Chat-like prompt for single task with user preferences
+   * 6. Get hour blocks that are already occupied
+   * ---------------------------------------------------------- */
+  static Set<int> _getOccupiedHourBlocks(List<_TimeSlot> scheduledSlots) {
+    final occupiedHours = <int>{};
+    
+    for (final slot in scheduledSlots) {
+      // Get the hour of the scheduled task
+      final taskHour = slot.start.hour;
+      
+      // Mark this hour as occupied
+      occupiedHours.add(taskHour);
+      
+      // If task spans across multiple hours, mark those hours too
+      final endHour = slot.end.hour;
+      if (endHour != taskHour) {
+        // If task ends at exactly the hour (e.g., 6:00), don't mark that hour
+        if (slot.end.minute > 0 || endHour != slot.end.hour) {
+          for (int hour = taskHour + 1; hour <= endHour; hour++) {
+            occupiedHours.add(hour);
+          }
+        }
+      }
+      
+      dev.log('   - Task ${slot.taskId} occupies hours: $taskHour${endHour != taskHour ? ' to $endHour' : ''}', name: 'AiScheduler');
+    }
+    
+    dev.log('   - Total occupied hour blocks: $occupiedHours', name: 'AiScheduler');
+    return occupiedHours;
+  }
+
+  /* ----------------------------------------------------------
+   * 7. Find available time slots considering existing schedule and hour blocks
+   * ---------------------------------------------------------- */
+  static List<_TimeSlot> _findAvailableSlots({
+    required DateTime date,
+    required List<_TimeSlot> scheduledSlots,
+    required int taskDuration,
+    required bool isWorkTask,
+    required Map<String, String> timeRanges,
+  }) {
+    final availableSlots = <_TimeSlot>[];
+    
+    // Parse time ranges
+    final workStart = timeRanges['workingHours']!.split('-')[0];
+    final workEnd = timeRanges['workingHours']!.split('-')[1];
+    final sleepStart = timeRanges['sleepSchedule']!.split('-')[0];
+    final sleepEnd = timeRanges['sleepSchedule']!.split('-')[1];
+    
+    // Convert to DateTime objects for the current date
+    final workStartTime = _parseTimeString(workStart, date);
+    final workEndTime = _parseTimeString(workEnd, date);
+    final sleepStartTime = _parseTimeString(sleepStart, date);
+    final sleepEndTime = _parseTimeString(sleepEnd, date);
+    
+    // Get occupied hour blocks
+    final occupiedHourBlocks = _getOccupiedHourBlocks(scheduledSlots);
+    
+    // Determine scheduling window based on task type
+    final DateTime schedulingStart, schedulingEnd;
+    
+    if (isWorkTask) {
+      schedulingStart = workStartTime;
+      schedulingEnd = workEndTime;
+    } else {
+      // Personal tasks: before work hours or after work hours
+      schedulingStart = _parseTimeString('00:00', date);
+      schedulingEnd = workStartTime;
+      // Also consider after work hours
+      final eveningStart = workEndTime;
+      final eveningEnd = _parseTimeString('23:59', date);
+      
+      // Check morning slots
+      _findSlotsInWindow(
+        schedulingStart,
+        schedulingEnd,
+        scheduledSlots,
+        taskDuration,
+        availableSlots,
+        sleepStartTime,
+        sleepEndTime,
+        occupiedHourBlocks,
+      );
+      
+      // Check evening slots
+      _findSlotsInWindow(
+        eveningStart,
+        eveningEnd,
+        scheduledSlots,
+        taskDuration,
+        availableSlots,
+        sleepStartTime,
+        sleepEndTime,
+        occupiedHourBlocks,
+      );
+      
+      return availableSlots;
+    }
+    
+    // For work tasks, only check during work hours
+    _findSlotsInWindow(
+      schedulingStart,
+      schedulingEnd,
+      scheduledSlots,
+      taskDuration,
+      availableSlots,
+      sleepStartTime,
+      sleepEndTime,
+      occupiedHourBlocks,
+    );
+    
+    return availableSlots;
+  }
+
+  static void _findSlotsInWindow(
+    DateTime windowStart,
+    DateTime windowEnd,
+    List<_TimeSlot> scheduledSlots,
+    int taskDuration,
+    List<_TimeSlot> availableSlots,
+    DateTime sleepStart,
+    DateTime sleepEnd,
+    Set<int> occupiedHourBlocks,
+  ) {
+    DateTime currentTime = windowStart;
+    
+    while (currentTime.add(Duration(minutes: taskDuration)).isBefore(windowEnd) || 
+           currentTime.add(Duration(minutes: taskDuration)) == windowEnd) {
+      
+      final slotEnd = currentTime.add(Duration(minutes: taskDuration));
+      
+      // Get the hour blocks this slot would occupy
+      final slotStartHour = currentTime.hour;
+      final slotEndHour = slotEnd.hour;
+      final slotHours = <int>{slotStartHour};
+      
+      // If slot spans multiple hours, add all hours it occupies
+      if (slotEndHour != slotStartHour) {
+        for (int hour = slotStartHour + 1; hour <= slotEndHour; hour++) {
+          slotHours.add(hour);
+        }
+      }
+      
+      // Check if any of the slot hours are already occupied
+      final hasHourBlockConflict = slotHours.any((hour) => occupiedHourBlocks.contains(hour));
+      
+      // Check if this slot overlaps with any scheduled slot
+      final hasTimeConflict = scheduledSlots.any((scheduled) =>
+          (currentTime.isBefore(scheduled.end) && slotEnd.isAfter(scheduled.start)));
+      
+      // Check if this slot overlaps with sleep time
+      final overlapsSleep = (currentTime.isBefore(sleepEnd) && slotEnd.isAfter(sleepStart)) ||
+                           (currentTime.isAfter(sleepStart) && currentTime.isBefore(sleepEnd));
+      
+      if (!hasHourBlockConflict && !hasTimeConflict && !overlapsSleep) {
+        availableSlots.add(_TimeSlot(start: currentTime, end: slotEnd, taskId: ''));
+        dev.log('   - Available slot: ${DateFormat('HH:mm').format(currentTime)}-${DateFormat('HH:mm').format(slotEnd)} (Hours: $slotHours)', name: 'AiScheduler');
+      } else {
+        if (hasHourBlockConflict) {
+          dev.log('   - Skipped slot: ${DateFormat('HH:mm').format(currentTime)}-${DateFormat('HH:mm').format(slotEnd)} - Hour block conflict (Occupied hours: $occupiedHourBlocks)', name: 'AiScheduler');
+        }
+      }
+      
+      // Move to next potential slot (15-minute increments)
+      currentTime = currentTime.add(const Duration(minutes: 15));
+    }
+  }
+
+  static DateTime _parseTimeString(String timeStr, DateTime date) {
+    final parts = timeStr.split(':');
+    final hour = int.parse(parts[0]);
+    final minute = int.parse(parts[1]);
+    return DateTime(date.year, date.month, date.day, hour, minute);
+  }
+
+  /* ----------------------------------------------------------
+   * 8. Chat-like prompt for single task with available slots
    * ---------------------------------------------------------- */
   static Future<String> chatSchedule(Task task, {Map<String, dynamic>? userPreferences}) async {
     final today = DateTime.now();
-    final dateStr = DateFormat('yyyy-MM-dd').format(today);
     
     dev.log('🚀 STARTING SINGLE TASK SCHEDULING', name: 'AiScheduler');
     dev.log('📋 TASK DETAILS:', name: 'AiScheduler');
     dev.log('   - ID: ${task.id}', name: 'AiScheduler');
     dev.log('   - Title: ${task.title}', name: 'AiScheduler');
-    dev.log('   - Description: ${task.desc}', name: 'AiScheduler');
     dev.log('   - Duration: ${task.durationMin}min', name: 'AiScheduler');
     dev.log('   - Priority: ${task.priority.name}', name: 'AiScheduler');
-    dev.log('   - UID: ${task.uid}', name: 'AiScheduler');
     
-    // Get user data if not provided
+    // Get user data
     final userData = userPreferences != null ? 
         {'preferences': userPreferences} : await _getUserData(task.uid);
     final prefs = userData?['preferences'];
     final timeRanges = _parseTimeRanges(prefs);
     
-    final blocked = await _blockedSlots(uid: task.uid, day: today);
-    
     // Determine if task is work-related
     final isWorkTask = await _isWorkRelatedTask(task);
     
-    // Get task tags for better context
-    final taskTags = await _getTaskTags(task.id, task.uid);
+    // Check available slots for the next 7 days or until deadline
+    final daysToCheck = _calculateDaysToCheck(today, task.deadline!);
+    final scheduledSlots = await _getScheduledSlots(
+      uid: task.uid,
+      startDate: today,
+      daysToCheck: daysToCheck,
+    );
     
-    final workStart = timeRanges['workingHours']!.split('-')[0];
-    final workEnd = timeRanges['workingHours']!.split('-')[1];
-    final schedulingWindow = isWorkTask ? 
-        'ONLY during working hours ($workStart-$workEnd)' : 
-        'ONLY outside working hours (before $workStart or after $workEnd)';
-
-    dev.log('🎯 SCHEDULING CONSTRAINTS:', name: 'AiScheduler');
-    dev.log('   - Task Type: ${isWorkTask ? "WORK" : "PERSONAL"}', name: 'AiScheduler');
-    dev.log('   - Working Hours: $workStart-$workEnd', name: 'AiScheduler');
-    dev.log('   - Sleep Schedule: ${timeRanges['sleepSchedule']}', name: 'AiScheduler');
-    dev.log('   - Scheduling Window: $schedulingWindow', name: 'AiScheduler');
-    dev.log('   - Blocked Slots: ${blocked.length}', name: 'AiScheduler');
-
-    final prompt = StringBuffer()
-      ..writeln('You are an intelligent daily planner that respects user preferences.')
-      ..writeln('')
-      ..writeln('USER PREFERENCES:')
-      ..writeln('- Work Type: ${prefs?['workType'] ?? "Flexible"}')
-      ..writeln('- Focus Style: ${prefs?['focusStyle'] ?? "Flexible"}')
-      ..writeln('- Productivity Goal: ${prefs?['productivityGoal'] ?? "General productivity"}')
-      ..writeln('- Working Hours: $workStart-$workEnd')
-      ..writeln('- Sleep Schedule: ${timeRanges['sleepSchedule']} (NEVER schedule during sleep)')
-      ..writeln('')
-      ..writeln('TASK TO SCHEDULE:')
-      ..writeln('- Title: ${task.title}')
-      ..writeln('- Description: ${task.desc}')
-      ..writeln('- Duration: ${task.durationMin} minutes')
-      ..writeln('- Priority: ${task.priority.name}')
-      ..writeln('- Type: ${isWorkTask ? "WORK-RELATED" : "PERSONAL"}')
-      ..writeln('- Tags: ${taskTags?.join(", ") ?? "No tags"}')
-      ..writeln('')
-      ..writeln('ALREADY BOOKED SLOTS (avoid these):');
-
-    if (blocked.isEmpty) {
-      prompt.writeln('- No existing bookings');
-    } else {
-      for (final slot in blocked) {
-        prompt.writeln('- ${DateFormat('HH:mm').format(slot.start)}-${DateFormat('HH:mm').format(slot.end)}');
+    // Find available slots for each day
+    final availableSlotsByDay = <DateTime, List<_TimeSlot>>{};
+    DateTime? firstAvailableDay;
+    
+    for (final entry in scheduledSlots.entries) {
+      final date = entry.key;
+      final slots = _findAvailableSlots(
+        date: date,
+        scheduledSlots: entry.value,
+        taskDuration: task.durationMin,
+        isWorkTask: isWorkTask,
+        timeRanges: timeRanges,
+      );
+      
+      if (slots.isNotEmpty) {
+        availableSlotsByDay[date] = slots;
+        firstAvailableDay ??= date;
+        dev.log('✅ Available slots on ${DateFormat('EEE, MMM d').format(date)}: ${slots.length}', name: 'AiScheduler');
+      } else {
+        dev.log('❌ No available slots on ${DateFormat('EEE, MMM d').format(date)}', name: 'AiScheduler');
       }
     }
-
-    prompt
-      ..writeln('')
-      ..writeln('CRITICAL SCHEDULING RULES:')
-      ..writeln('1. WORK TASKS: Schedule ONLY between $workStart-$workEnd')
-      ..writeln('2. PERSONAL TASKS: Schedule ONLY outside $workStart-$workEnd')
-      ..writeln('3. NEVER during sleep hours (${timeRanges['sleepSchedule']})')
-      ..writeln('4. Consider focus style: ${prefs?['focusStyle'] ?? "Flexible"}')
-      ..writeln('5. Align with productivity goal: ${prefs?['productivityGoal'] ?? "General productivity"}')
-      ..writeln('6. Include 15-minute breaks between tasks')
-      ..writeln('7. High priority tasks get optimal focus hours')
-      ..writeln('')
-      ..writeln('WORK TASK CRITERIA: Tasks with tags: work, work projects, college, student')
-      ..writeln('PERSONAL TASK CRITERIA: All other tasks (health, fitness, hobbies, family, etc.)')
-      ..writeln('')
-      ..writeln('Reply with: "How about HH:MM-HH:MM? [Brief reason based on task type and user preferences]"')
-      ..writeln('Example for work task: "How about 14:30-15:15? Perfect work hours slot for your project task."')
-      ..writeln('Example for personal task: "How about 18:30-19:15? After work hours for your personal fitness routine."');
-
-    final promptString = prompt.toString();
+    
+    // If no slots available within deadline, return error
+    if (availableSlotsByDay.isEmpty) {
+      return 'SCHEDULING_ERROR: No available time slots found before the task deadline. Please consider extending the deadline or rescheduling other tasks.';
+    }
+    
+    // Build prompt with available slots
+    final prompt = _buildSchedulingPrompt(
+      task: task,
+      prefs: prefs,
+      timeRanges: timeRanges,
+      isWorkTask: isWorkTask,
+      availableSlotsByDay: availableSlotsByDay,
+      firstAvailableDay: firstAvailableDay!,
+    );
+    
     dev.log('📤 SENDING PROMPT TO AI:', name: 'AiScheduler');
-    dev.log('```\n$promptString\n```', name: 'AiScheduler');
+    dev.log('```\n$prompt\n```', name: 'AiScheduler');
 
     try {
-      final resp = await gemini.generateContent([Content.text(promptString)]);
+      final resp = await gemini.generateContent([Content.text(prompt)]);
       final response = resp.text?.trim() ?? 'I need more information to schedule this task.';
       dev.log('📥 AI RESPONSE:', name: 'AiScheduler');
       dev.log('```\n$response\n```', name: 'AiScheduler');
@@ -373,8 +472,74 @@ class AiScheduler {
     }
   }
 
+  static int _calculateDaysToCheck(DateTime startDate, DateTime deadline) {
+    final daysUntilDeadline = deadline.difference(startDate).inDays;
+    // Check up to 7 days or until deadline, whichever is smaller
+    return daysUntilDeadline < 7 ? daysUntilDeadline + 1 : 7;
+  }
+
+  static String _buildSchedulingPrompt({
+    required Task task,
+    required Map<String, dynamic>? prefs,
+    required Map<String, String> timeRanges,
+    required bool isWorkTask,
+    required Map<DateTime, List<_TimeSlot>> availableSlotsByDay,
+    required DateTime firstAvailableDay,
+  }) {
+    final buffer = StringBuffer()
+      ..writeln('You are an intelligent daily planner that respects user preferences and available time slots.')
+      ..writeln('')
+      ..writeln('USER PREFERENCES:')
+      ..writeln('- Work Type: ${prefs?['workType'] ?? "Flexible"}')
+      ..writeln('- Focus Style: ${prefs?['focusStyle'] ?? "Flexible"}')
+      ..writeln('- Productivity Goal: ${prefs?['productivityGoal'] ?? "General productivity"}')
+      ..writeln('- Working Hours: ${timeRanges['workingHours']}')
+      ..writeln('- Sleep Schedule: ${timeRanges['sleepSchedule']} (NEVER schedule during sleep)')
+      ..writeln('')
+      ..writeln('TASK TO SCHEDULE:')
+      ..writeln('- Title: ${task.title}')
+      ..writeln('- Description: ${task.desc}')
+      ..writeln('- Duration: ${task.durationMin} minutes')
+      ..writeln('- Priority: ${task.priority.name}')
+      ..writeln('- Type: ${isWorkTask ? "WORK-RELATED" : "PERSONAL"}')
+      ..writeln('- Deadline: ${DateFormat('EEE, MMM d, yyyy').format(task.deadline!)}')
+      ..writeln('')
+      ..writeln('AVAILABLE TIME SLOTS (choose from these only):');
+
+    availableSlotsByDay.forEach((date, slots) {
+      buffer.writeln('- ${DateFormat('EEE, MMM d').format(date)}:');
+      if (slots.isEmpty) {
+        buffer.writeln('  No available slots');
+      } else {
+        for (final slot in slots.take(10)) { // Limit to first 10 slots per day
+          buffer.writeln('  ${DateFormat('HH:mm').format(slot.start)}-${DateFormat('HH:mm').format(slot.end)}');
+        }
+        if (slots.length > 10) {
+          buffer.writeln('  ... and ${slots.length - 10} more slots');
+        }
+      }
+    });
+
+    buffer
+      ..writeln('')
+      ..writeln('CRITICAL SCHEDULING RULES:')
+      ..writeln('1. WORK TASKS: Schedule ONLY during working hours (${timeRanges['workingHours']})')
+      ..writeln('2. PERSONAL TASKS: Schedule ONLY outside working hours')
+      ..writeln('3. NEVER during sleep hours (${timeRanges['sleepSchedule']})')
+      ..writeln('4. Choose ONLY from the available slots listed above')
+      ..writeln('5. Prefer earlier dates to meet the deadline')
+      ..writeln('6. High priority tasks should get optimal focus hours')
+      ..writeln('7. Consider user focus style: ${prefs?['focusStyle'] ?? "Flexible"}')
+      ..writeln('8. DO NOT schedule in hour blocks that already have tasks')
+      ..writeln('')
+      ..writeln('Reply with: "How about DATE at HH:MM-HH:MM? [Brief reason based on task type and preferences]"')
+      ..writeln('Example: "How about ${DateFormat('EEE, MMM d').format(firstAvailableDay)} at 14:30-15:15? Perfect work hours slot for your project task."');
+
+    return buffer.toString();
+  }
+
   /* ----------------------------------------------------------
-   * 7. Insert single slot
+   * 9. Insert single slot
    * ---------------------------------------------------------- */
   static Future<void> insertSingleSlot(
     Task task, 
@@ -382,8 +547,7 @@ class AiScheduler {
     DateTime endTime, 
     {required String userId}
   ) async {
-    final today = DateTime.now();
-    final dateStr = DateFormat('yyyy-MM-dd').format(today);
+    final dateStr = DateFormat('yyyy-MM-dd').format(startTime);
 
     dev.log('💾 INSERTING SCHEDULE SLOT:', name: 'AiScheduler');
     dev.log('   - User ID: $userId', name: 'AiScheduler');
@@ -450,200 +614,60 @@ class AiScheduler {
     dev.log('✅ Schedule saved successfully', name: 'AiScheduler');
   }
 
-  // ... (rest of the code remains the same for bulk optimization)
   /* ----------------------------------------------------------
-   * 8. Bulk optimization with user preferences
+   * 10. Check if task can be scheduled (for reschedule flow)
    * ---------------------------------------------------------- */
-  static Future<String> optimiseAndSave(List<Task> raw) async {
+  static Future<Map<String, dynamic>> checkSchedulingAvailability(Task task) async {
     final today = DateTime.now();
-    final dateStr = DateFormat('yyyy-MM-dd').format(today);
-    final uid = raw.first.uid;
-
-    dev.log('🚀 STARTING BULK SCHEDULING for $uid', name: 'AiScheduler');
-    dev.log('   - Total tasks: ${raw.length}', name: 'AiScheduler');
-
+    
     // Get user data
-    final userData = await _getUserData(uid);
+    final userData = await _getUserData(task.uid);
     final prefs = userData?['preferences'];
     final timeRanges = _parseTimeRanges(prefs);
-
-    // Read existing schedule
-    final existingSnap = await FirebaseFirestore.instance
-        .collection('schedules')
-        .where('uid', isEqualTo: uid)
-        .where('scheduleDate', isEqualTo: dateStr)
-        .orderBy('createdAt', descending: true)
-        .limit(1)
-        .get();
-
-    final Map<String, dynamic> existingMap = {};
-    if (existingSnap.docs.isNotEmpty) {
-      for (final slot in (existingSnap.docs.first.data()['orderedTasks'] as List<dynamic>)) {
-        existingMap[slot['id'] as String] = slot;
-      }
-    }
-
-    // Keep only NEW tasks
-    final newTasks = raw.where((t) => !existingMap.containsKey(t.id)).toList();
-    if (newTasks.isEmpty) {
-      dev.log('🤖 All tasks already scheduled', name: 'AiScheduler');
-      return existingSnap.docs.isEmpty ? '' : existingSnap.docs.first.id;
-    }
-
-    dev.log('   - New tasks to schedule: ${newTasks.length}', name: 'AiScheduler');
-
-    // Get blocked slots
-    final blocked = await _blockedSlots(uid: uid, day: today);
-
-    // Separate work and personal tasks
-    final workTasks = <Task>[];
-    final personalTasks = <Task>[];
     
-    for (final task in newTasks) {
-      if (await _isWorkRelatedTask(task)) {
-        workTasks.add(task);
-      } else {
-        personalTasks.add(task);
-      }
-    }
-
-    dev.log('   - Work tasks: ${workTasks.length}', name: 'AiScheduler');
-    dev.log('   - Personal tasks: ${personalTasks.length}', name: 'AiScheduler');
-
-    // Get work hours
-    final workStart = timeRanges['workingHours']!.split('-')[0];
-    final workEnd = timeRanges['workingHours']!.split('-')[1];
-
-    // Build comprehensive prompt
-    final buffer = StringBuffer()
-      ..writeln('You are an expert daily planner that strictly follows user preferences.')
-      ..writeln('')
-      ..writeln('USER PREFERENCES:')
-      ..writeln('- Work Type: ${prefs?['workType'] ?? "Flexible"}')
-      ..writeln('- Focus Style: ${prefs?['focusStyle'] ?? "Flexible"}')
-      ..writeln('- Productivity Goal: ${prefs?['productivityGoal'] ?? "General productivity"}')
-      ..writeln('- Working Hours: $workStart-$workEnd')
-      ..writeln('- Sleep Schedule: ${timeRanges['sleepSchedule']} (NEVER SCHEDULE DURING SLEEP)')
-      ..writeln('')
-      ..writeln('EXISTING SCHEDULE (avoid these times):');
-
-    if (blocked.isEmpty) {
-      buffer.writeln('- No existing bookings');
-    } else {
-      for (final slot in blocked) {
-        buffer.writeln('- ${DateFormat('HH:mm').format(slot.start)}-${DateFormat('HH:mm').format(slot.end)}');
-      }
-    }
-
-    buffer
-      ..writeln('')
-      ..writeln('WORK TASKS (schedule ONLY during working hours $workStart-$workEnd):');
-    if (workTasks.isEmpty) {
-      buffer.writeln('- No work tasks');
-    } else {
-      for (final t in workTasks) {
-        final taskTags = await _getTaskTags(t.id, t.uid);
-        buffer.writeln('- ID:${t.id}|TITLE:${t.title}|TAGS:${taskTags?.join(", ") ?? "No tags"}|DURATION:${t.durationMin}min|PRIORITY:${t.priority.name}');
-      }
-    }
-
-    buffer
-      ..writeln('')
-      ..writeln('PERSONAL TASKS (schedule ONLY outside working hours - before $workStart or after $workEnd):');
-    if (personalTasks.isEmpty) {
-      buffer.writeln('- No personal tasks');
-    } else {
-      for (final t in personalTasks) {
-        final taskTags = await _getTaskTags(t.id, t.uid);
-        buffer.writeln('- ID:${t.id}|TITLE:${t.title}|TAGS:${taskTags?.join(", ") ?? "No tags"}|DURATION:${t.durationMin}min|PRIORITY:${t.priority.name}');
-      }
-    }
-
-    buffer
-      ..writeln('')
-      ..writeln('CRITICAL RULES:')
-      ..writeln('1. WORK TASKS: Schedule ONLY between $workStart-$workEnd')
-      ..writeln('2. PERSONAL TASKS: Schedule ONLY outside $workStart-$workEnd')
-      ..writeln('3. NEVER during ${timeRanges['sleepSchedule']}')
-      ..writeln('4. Consider user focus style: ${prefs?['focusStyle']}')
-      ..writeln('5. High priority tasks get optimal focus hours')
-      ..writeln('6. Include 15-minute breaks between consecutive tasks')
-      ..writeln('7. Group similar tasks together when possible')
-      ..writeln('')
-      ..writeln('WORK TASK CRITERIA: Tasks with tags: work, work projects, college, student')
-      ..writeln('PERSONAL TASK CRITERIA: All other tasks')
-      ..writeln('')
-      ..writeln('Return JSON: [{"id":"taskId","start":"HH:mm","reason":"Explanation based on task type and user preferences"}]');
-
-    final promptString = buffer.toString();
-    dev.log('📤 SENDING BULK PROMPT TO AI:', name: 'AiScheduler');
-    dev.log('```\n$promptString\n```', name: 'AiScheduler');
-
-    try {
-      final resp = await gemini.generateContent([Content.text(promptString)]);
-      String jsonStr = (resp.text ?? '[]').trim()
-          .replaceFirst(RegExp(r'^```json\s*'), '')
-          .replaceFirst(RegExp(r'\s*```$'), '');
+    // Determine if task is work-related
+    final isWorkTask = await _isWorkRelatedTask(task);
+    
+    // Check available slots for the next 7 days or until deadline
+    final daysToCheck = _calculateDaysToCheck(today, task.deadline!);
+    final scheduledSlots = await _getScheduledSlots(
+      uid: task.uid,
+      startDate: today,
+      daysToCheck: daysToCheck,
+    );
+    
+    // Find first available slot
+    for (final entry in scheduledSlots.entries) {
+      final date = entry.key;
+      final slots = _findAvailableSlots(
+        date: date,
+        scheduledSlots: entry.value,
+        taskDuration: task.durationMin,
+        isWorkTask: isWorkTask,
+        timeRanges: timeRanges,
+      );
       
-      dev.log('📥 AI BULK RESPONSE:', name: 'AiScheduler');
-      dev.log('```\n$jsonStr\n```', name: 'AiScheduler');
-      final List<dynamic> timeList = jsonDecode(jsonStr);
-
-      // Merge new slots
-      for (final t in timeList) {
-        final taskTime = DateFormat('HH:mm').parseUtc(t['start']).toLocal();
-        final realStart = DateTime(today.year, today.month, today.day, taskTime.hour, taskTime.minute);
-
-        final task = newTasks.firstWhere((tk) => tk.id == t['id']);
-        final isWorkTask = await _isWorkRelatedTask(task);
-
-        existingMap[t['id'] as String] = {
-          'id': t['id'],
-          'title': task.title,
-          'durationMin': task.durationMin,
-          'start': DateFormat('HH:mm').format(realStart),
-          'date': dateStr,
-          'priority': task.priority.name,
-          'reason': t['reason'] ?? 'Scheduled during ${isWorkTask ? "work" : "personal"} hours',
-          'scheduled': true,
-          'taskType': isWorkTask ? 'work' : 'personal',
+      if (slots.isNotEmpty) {
+        return {
+          'canSchedule': true,
+          'firstAvailableDate': date,
+          'availableSlots': slots,
         };
       }
-
-      // Convert to sorted list
-      final merged = existingMap.values.toList()
-        ..sort((a, b) =>
-            DateFormat('HH:mm').parseUtc(a['start']).compareTo(DateFormat('HH:mm').parseUtc(b['start'])));
-
-      // Save to Firestore
-      if (existingSnap.docs.isEmpty) {
-        final doc = await FirebaseFirestore.instance.collection('schedules').add({
-          'uid': uid,
-          'scheduleDate': dateStr,
-          'orderedTasks': merged,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-        dev.log('✅ Created new schedule document: ${doc.id}', name: 'AiScheduler');
-        return doc.id;
-      } else {
-        final id = existingSnap.docs.first.id;
-        await FirebaseFirestore.instance.collection('schedules').doc(id).update({
-          'orderedTasks': merged,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-        dev.log('✅ Updated existing schedule document: $id', name: 'AiScheduler');
-        return id;
-      }
-    } catch (e) {
-      dev.log('❌ Error in optimiseAndSave: $e', name: 'AiScheduler');
-      rethrow;
     }
+    
+    return {
+      'canSchedule': false,
+      'reason': 'No available time slots found before the task deadline. Please consider extending the deadline or rescheduling other tasks.',
+    };
   }
 }
 
 /* ---------- Helper class ---------- */
-class _BlockedSlot {
+class _TimeSlot {
   final DateTime start;
   final DateTime end;
-  _BlockedSlot({required this.start, required this.end});
+  final String taskId;
+  
+  _TimeSlot({required this.start, required this.end, required this.taskId});
 }

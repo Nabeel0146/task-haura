@@ -26,6 +26,7 @@ class _AddTaskPageState extends State<AddTaskPage> {
 
   List<String> _userTags = [];
   bool _loadingTags = true;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -82,9 +83,13 @@ class _AddTaskPageState extends State<AddTaskPage> {
     }
   }
 
-  void _submit() {
-    if (_loadingTags) return;
-    if (_formKey.currentState!.validate()) {
+ Future<void> _submit() async {
+  if (_loadingTags || _saving) return;
+  if (_formKey.currentState!.validate()) {
+    setState(() => _saving = true);
+    
+    try {
+      // Create task object
       final task = Task(
         title: _titleCtrl.text.trim(),
         desc: _descCtrl.text.trim(),
@@ -95,9 +100,56 @@ class _AddTaskPageState extends State<AddTaskPage> {
         status: _status,
         tag: _selectedTag,
       );
-      Navigator.of(context).pop(task);
+
+      // Convert task to map for Firestore manually
+      final taskMap = {
+        'title': task.title,
+        'desc': task.desc,
+        'durationMin': task.durationMin,
+        'deadline': Timestamp.fromDate(task.deadline!),
+        'priority': task.priority.name,
+        'uid': task.uid,
+        'status': task.status.name,
+        'tag': task.tag,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+
+      // Add to Firestore
+      final docRef = await FirebaseFirestore.instance
+          .collection('tasks')
+          .add(taskMap);
+
+      // Update the task with the generated ID
+      await docRef.update({'id': docRef.id});
+
+      if (mounted) {
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Task created successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        // Navigate back
+        Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error creating task: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
     }
   }
+}
 
   Future<void> _showAddTagDialog() async {
     return showDialog<void>(
@@ -267,9 +319,18 @@ class _AddTaskPageState extends State<AddTaskPage> {
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: FilledButton.icon(
-              icon: const Icon(Icons.save, size: 20),
-              label: const Text('Save'),
-              onPressed: _submit,
+              icon: _saving 
+                  ? const SizedBox(
+                      height: 16,
+                      width: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(Colors.white),
+                      ),
+                    )
+                  : const Icon(Icons.save, size: 20),
+              label: _saving ? const Text('Saving...') : const Text('Save'),
+              onPressed: _saving ? null : _submit,
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               ),
@@ -481,15 +542,26 @@ class _AddTaskPageState extends State<AddTaskPage> {
               SizedBox(
                 height: 54,
                 child: FilledButton.icon(
-                  icon: const Icon(Icons.add_task, size: 24),
-                  label: const Text(
-                    'CREATE TASK',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  onPressed: _submit,
+                  icon: _saving 
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation(Colors.white),
+                          ),
+                        )
+                      : const Icon(Icons.add_task, size: 24),
+                  label: _saving 
+                      ? const Text('CREATING TASK...')
+                      : const Text(
+                          'CREATE TASK',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                  onPressed: _saving ? null : _submit,
                   style: FilledButton.styleFrom(
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),

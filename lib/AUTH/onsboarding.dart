@@ -45,16 +45,13 @@ class _OnboardingPageState extends State<OnboardingPage> {
   ];
 
   final List<String> _interestOptions = [
-    'Work Projects',
-    'Personal Development',
-    'Health & Fitness',
-    'Creative Work',
-    'Learning & Education',
-    'Household Tasks',
-    'Social & Family',
-    'Financial Planning',
-    'Side Projects',
-    'Self Care'
+    'Work',
+    'Study',
+    'Freelancing',
+    'Kitchen',
+    'Parenting',
+    'Family',
+    'Personal'
   ];
 
   final List<String> _goalOptions = [
