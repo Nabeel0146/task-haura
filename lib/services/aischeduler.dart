@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:developer' as dev;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_ai/firebase_ai.dart';
 import 'package:intl/intl.dart';
@@ -12,7 +11,7 @@ class AiScheduler {
    * ---------------------------------------------------------- */
   static Future<Map<String, dynamic>?> _getUserData(String uid) async {
     try {
-      dev.log('🔍 Fetching user data for UID: $uid', name: 'AiScheduler');
+      print('🔍 Fetching user data for UID: $uid');
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(uid)
@@ -20,49 +19,71 @@ class AiScheduler {
       
       if (userDoc.exists) {
         final data = userDoc.data();
-        dev.log('✅ User data found:', name: 'AiScheduler');
-        dev.log('   - Preferences: ${data?['preferences']}', name: 'AiScheduler');
-        dev.log('   - Tags: ${data?['tags']}', name: 'AiScheduler');
-        dev.log('   - Interests: ${data?['interests']}', name: 'AiScheduler');
+        print('✅ User data found:');
+        print('   - Preferences: ${data?['preferences']}');
+        print('   - Tags: ${data?['tag']}');
+        print('   - Interests: ${data?['interests']}');
         return {
           'preferences': data?['preferences'] as Map<String, dynamic>?,
-          'tags': data?['tags'] as List<dynamic>?,
+          'tag': data?['tag'] as List<dynamic>?,
           'interests': data?['interests'] as List<dynamic>?,
         };
       } else {
-        dev.log('❌ User document does not exist for UID: $uid', name: 'AiScheduler');
+        print('❌ User document does not exist for UID: $uid');
       }
     } catch (e) {
-      dev.log('❌ Error fetching user data: $e', name: 'AiScheduler');
+      print('❌ Error fetching user data: $e');
     }
     return null;
   }
 
-  /* ----------------------------------------------------------
-   * 2. Get task tags from Firestore
-   * ---------------------------------------------------------- */
-  static Future<List<String>?> _getTaskTags(String taskId, String uid) async {
-    try {
-      dev.log('🔍 Fetching task tags for task ID: $taskId', name: 'AiScheduler');
-      final taskDoc = await FirebaseFirestore.instance
-          .collection('tasks')
-          .doc(taskId)
-          .get();
+ /* ----------------------------------------------------------
+ * 2. Get task tags from Firestore
+ * ---------------------------------------------------------- */
+static Future<List<String>?> _getTaskTags(String taskId, String uid) async {
+  try {
+    print('🔍 Fetching task tags for task ID: $taskId');
+    final taskDoc = await FirebaseFirestore.instance
+        .collection('tasks')
+        .doc(taskId)
+        .get();
+    
+    if (taskDoc.exists) {
+      final data = taskDoc.data();
+      print('📋 Task document data: $data');
       
-      if (taskDoc.exists) {
-        final data = taskDoc.data();
-        final tags = data?['tags'] as List<dynamic>?;
-        final tagList = tags?.map((tag) => tag.toString().toLowerCase()).toList();
-        dev.log('✅ Task tags found: $tagList', name: 'AiScheduler');
+      // Check for the tag field (singular)
+      final tag = data?['tag'];
+      
+      if (tag != null) {
+        List<String> tagList = [];
+        
+        // Handle different tag data structures
+        if (tag is List) {
+          // It's a list of tags
+          tagList = tag.map((t) => t.toString().toLowerCase().trim()).toList();
+        } else if (tag is String) {
+          // It's a single string tag
+          tagList = [tag.toLowerCase().trim()];
+        }
+        
+        // Filter out empty tags
+        tagList = tagList.where((t) => t.isNotEmpty).toList();
+        
+        print('✅ Task tags found: $tagList');
         return tagList;
       } else {
-        dev.log('❌ Task document does not exist for ID: $taskId', name: 'AiScheduler');
+        print('❌ No tag field found in task document');
+        print('   Available fields: ${data?.keys.toList()}');
       }
-    } catch (e) {
-      dev.log('❌ Error fetching task tags: $e', name: 'AiScheduler');
+    } else {
+      print('❌ Task document does not exist for ID: $taskId');
     }
-    return null;
+  } catch (e) {
+    print('❌ Error fetching task tags: $e');
   }
+  return null;
+}
 
   /* ----------------------------------------------------------
    * 3. Parse working hours and sleep schedule
@@ -72,41 +93,41 @@ class AiScheduler {
     String sleepSchedule = '22:00-06:00'; // Default
 
     if (prefs != null) {
-      dev.log('🔍 Parsing time ranges from preferences: $prefs', name: 'AiScheduler');
+      print('🔍 Parsing time ranges from preferences: $prefs');
       
       // Parse working hours
       if (prefs['workingHours'] != null && prefs['workingHours'] != 'Flexible') {
         final wh = prefs['workingHours'].toString();
-        dev.log('   - Raw working hours: $wh', name: 'AiScheduler');
+        print('   - Raw working hours: $wh');
         final match = RegExp(r'(\d{1,2}):(\d{2})\s*(AM|PM)\s*–\s*(\d{1,2}):(\d{2})\s*(AM|PM)').firstMatch(wh);
         if (match != null) {
           workingHours = '${_to24Hour(match.group(1)!, match.group(3)!)}-${_to24Hour(match.group(4)!, match.group(6)!)}';
-          dev.log('   - Parsed working hours: $workingHours', name: 'AiScheduler');
+          print('   - Parsed working hours: $workingHours');
         } else {
-          dev.log('   - Could not parse working hours format', name: 'AiScheduler');
+          print('   - Could not parse working hours format');
         }
       } else {
-        dev.log('   - Using default working hours: $workingHours', name: 'AiScheduler');
+        print('   - Using default working hours: $workingHours');
       }
 
       // Parse sleep schedule
       if (prefs['sleepSchedule'] != null && prefs['sleepSchedule'] != 'Not set') {
         final ss = prefs['sleepSchedule'].toString();
-        dev.log('   - Raw sleep schedule: $ss', name: 'AiScheduler');
+        print('   - Raw sleep schedule: $ss');
         final match = RegExp(r'(\d{1,2}):(\d{2})\s*(AM|PM)\s*–\s*(\d{1,2}):(\d{2})\s*(AM|PM)').firstMatch(ss);
         if (match != null) {
           sleepSchedule = '${_to24Hour(match.group(1)!, match.group(3)!)}-${_to24Hour(match.group(4)!, match.group(6)!)}';
-          dev.log('   - Parsed sleep schedule: $sleepSchedule', name: 'AiScheduler');
+          print('   - Parsed sleep schedule: $sleepSchedule');
         } else {
-          dev.log('   - Could not parse sleep schedule format', name: 'AiScheduler');
+          print('   - Could not parse sleep schedule format');
         }
       } else {
-        dev.log('   - Using default sleep schedule: $sleepSchedule', name: 'AiScheduler');
+        print('   - Using default sleep schedule: $sleepSchedule');
       }
     } else {
-      dev.log('📋 Using default time ranges (no preferences)', name: 'AiScheduler');
-      dev.log('   - Working hours: $workingHours', name: 'AiScheduler');
-      dev.log('   - Sleep schedule: $sleepSchedule', name: 'AiScheduler');
+      print('📋 Using default time ranges (no preferences)');
+      print('   - Working hours: $workingHours');
+      print('   - Sleep schedule: $sleepSchedule');
     }
 
     return {
@@ -120,7 +141,7 @@ class AiScheduler {
     if (period == 'PM' && h != 12) h += 12;
     if (period == 'AM' && h == 12) h = 0;
     final result = '${h.toString().padLeft(2, '0')}:00';
-    dev.log('   - Converted $hour $period to $result', name: 'AiScheduler');
+    print('   - Converted $hour $period to $result');
     return result;
   }
 
@@ -128,38 +149,38 @@ class AiScheduler {
    * 4. Check if task is work-related using task tags and user interests
    * ---------------------------------------------------------- */
   static Future<bool> _isWorkRelatedTask(Task task) async {
-    dev.log('🔍 Checking if task is work-related:', name: 'AiScheduler');
-    dev.log('   - Task ID: ${task.id}', name: 'AiScheduler');
-    dev.log('   - Task Title: ${task.title}', name: 'AiScheduler');
-    dev.log('   - Task Description: ${task.desc}', name: 'AiScheduler');
-    dev.log('   - Task UID: ${task.uid}', name: 'AiScheduler');
+    print('🔍 Checking if task is work-related:');
+    print('   - Task ID: ${task.id}');
+    print('   - Task Title: ${task.title}');
+    print('   - Task Description: ${task.desc}');
+    print('   - Task UID: ${task.uid}');
     
     try {
       // Get task tags from Firestore
       final taskTags = await _getTaskTags(task.id, task.uid);
       
-      dev.log('🔍 Work classification analysis:', name: 'AiScheduler');
-      dev.log('   - Task tags: $taskTags', name: 'AiScheduler');
+      print('🔍 Work classification analysis:');
+      print('   - Task tags: $taskTags');
 
       // Check 1: Task has EXACT "work" tag (case-insensitive)
       if (taskTags != null && taskTags.isNotEmpty) {
         for (final tag in taskTags) {
           final tagStr = tag.toString().toLowerCase().trim();
           if (tagStr == 'work') {
-            dev.log('✅ Task identified as WORK: Has exact "work" tag', name: 'AiScheduler');
+            print('✅ Task identified as WORK: Has exact "work" tag');
             return true;
           }
         }
-        dev.log('❌ No exact "work" tag found in task', name: 'AiScheduler');
+        print('❌ No exact "work" tag found in task');
       } else {
-        dev.log('❌ No task tags found', name: 'AiScheduler');
+        print('❌ No task tags found');
       }
 
-      dev.log('🎯 FINAL DECISION: Task identified as PERSONAL', name: 'AiScheduler');
+      print('🎯 FINAL DECISION: Task identified as PERSONAL');
       return false;
       
     } catch (e) {
-      dev.log('❌ Error checking if task is work-related: $e', name: 'AiScheduler');
+      print('❌ Error checking if task is work-related: $e');
       return false;
     }
   }
@@ -167,14 +188,14 @@ class AiScheduler {
   /* ----------------------------------------------------------
    * 5. Get scheduled slots for multiple days
    * ---------------------------------------------------------- */
-  static Future<Map<DateTime, List<_TimeSlot>>> _getScheduledSlots({
+  static Future<Map<DateTime, List<ScheduledTask>>> _getScheduledSlots({
     required String uid,
     required DateTime startDate,
     required int daysToCheck,
   }) async {
-    dev.log('🔍 Fetching scheduled slots for $daysToCheck days starting from ${DateFormat('yyyy-MM-dd').format(startDate)}', name: 'AiScheduler');
+    print('🔍 Fetching scheduled slots for $daysToCheck days starting from ${DateFormat('yyyy-MM-dd').format(startDate)}');
     
-    final scheduledSlots = <DateTime, List<_TimeSlot>>{};
+    final scheduledSlots = <DateTime, List<ScheduledTask>>{};
     
     for (int i = 0; i < daysToCheck; i++) {
       final currentDate = startDate.add(Duration(days: i));
@@ -189,25 +210,41 @@ class AiScheduler {
           .get();
 
       if (snap.docs.isNotEmpty) {
-        final slots = (snap.docs.first.data()['orderedTasks'] as List<dynamic>)
-            .map((json) {
-          final date = DateFormat('yyyy-MM-dd').parseUtc(json['date']).toLocal();
-          final start = DateFormat('HH:mm').parseUtc(json['start']).toLocal();
-          final realStart = DateTime(date.year, date.month, date.day, start.hour, start.minute);
-          final dur = json['durationMin'] as int;
-          final slot = _TimeSlot(
-            start: realStart,
-            end: realStart.add(Duration(minutes: dur)),
-            taskId: json['id'] as String,
+        final data = snap.docs.first.data();
+        final orderedTasks = data['orderedTasks'] as List<dynamic>? ?? [];
+        
+        final slots = orderedTasks.map((taskData) {
+          final taskMap = taskData as Map<String, dynamic>;
+          final startTimeStr = taskMap['start'] as String;
+          final durationMin = taskMap['durationMin'] as int;
+          
+          // Parse the start time
+          final startTime = DateFormat('HH:mm').parse(startTimeStr);
+          final taskStart = DateTime(
+            currentDate.year, 
+            currentDate.month, 
+            currentDate.day, 
+            startTime.hour, 
+            startTime.minute
           );
-          return slot;
+          final taskEnd = taskStart.add(Duration(minutes: durationMin));
+          
+          return ScheduledTask(
+            start: taskStart,
+            end: taskEnd,
+            durationMin: durationMin,
+            taskId: taskMap['id'] as String? ?? '',
+          );
         }).toList();
         
         scheduledSlots[currentDate] = slots;
-        dev.log('   - ${dateStr}: ${slots.length} scheduled tasks', name: 'AiScheduler');
+        print('   - ${dateStr}: ${slots.length} scheduled tasks');
+        for (final slot in slots) {
+          print('     - ${DateFormat('HH:mm').format(slot.start)}-${DateFormat('HH:mm').format(slot.end)} (${slot.durationMin}min)');
+        }
       } else {
         scheduledSlots[currentDate] = [];
-        dev.log('   - ${dateStr}: No scheduled tasks', name: 'AiScheduler');
+        print('   - ${dateStr}: No scheduled tasks');
       }
     }
 
@@ -215,47 +252,16 @@ class AiScheduler {
   }
 
   /* ----------------------------------------------------------
-   * 6. Get hour blocks that are already occupied
+   * 6. Find available time slots considering existing schedule
    * ---------------------------------------------------------- */
-  static Set<int> _getOccupiedHourBlocks(List<_TimeSlot> scheduledSlots) {
-    final occupiedHours = <int>{};
-    
-    for (final slot in scheduledSlots) {
-      // Get the hour of the scheduled task
-      final taskHour = slot.start.hour;
-      
-      // Mark this hour as occupied
-      occupiedHours.add(taskHour);
-      
-      // If task spans across multiple hours, mark those hours too
-      final endHour = slot.end.hour;
-      if (endHour != taskHour) {
-        // If task ends at exactly the hour (e.g., 6:00), don't mark that hour
-        if (slot.end.minute > 0 || endHour != slot.end.hour) {
-          for (int hour = taskHour + 1; hour <= endHour; hour++) {
-            occupiedHours.add(hour);
-          }
-        }
-      }
-      
-      dev.log('   - Task ${slot.taskId} occupies hours: $taskHour${endHour != taskHour ? ' to $endHour' : ''}', name: 'AiScheduler');
-    }
-    
-    dev.log('   - Total occupied hour blocks: $occupiedHours', name: 'AiScheduler');
-    return occupiedHours;
-  }
-
-  /* ----------------------------------------------------------
-   * 7. Find available time slots considering existing schedule and hour blocks
-   * ---------------------------------------------------------- */
-  static List<_TimeSlot> _findAvailableSlots({
+  static List<TimeSlot> _findAvailableSlots({
     required DateTime date,
-    required List<_TimeSlot> scheduledSlots,
+    required List<ScheduledTask> scheduledSlots,
     required int taskDuration,
     required bool isWorkTask,
     required Map<String, String> timeRanges,
   }) {
-    final availableSlots = <_TimeSlot>[];
+    final availableSlots = <TimeSlot>[];
     
     // Parse time ranges
     final workStart = timeRanges['workingHours']!.split('-')[0];
@@ -268,9 +274,6 @@ class AiScheduler {
     final workEndTime = _parseTimeString(workEnd, date);
     final sleepStartTime = _parseTimeString(sleepStart, date);
     final sleepEndTime = _parseTimeString(sleepEnd, date);
-    
-    // Get occupied hour blocks
-    final occupiedHourBlocks = _getOccupiedHourBlocks(scheduledSlots);
     
     // Determine scheduling window based on task type
     final DateTime schedulingStart, schedulingEnd;
@@ -295,7 +298,6 @@ class AiScheduler {
         availableSlots,
         sleepStartTime,
         sleepEndTime,
-        occupiedHourBlocks,
       );
       
       // Check evening slots
@@ -307,7 +309,6 @@ class AiScheduler {
         availableSlots,
         sleepStartTime,
         sleepEndTime,
-        occupiedHourBlocks,
       );
       
       return availableSlots;
@@ -322,7 +323,6 @@ class AiScheduler {
       availableSlots,
       sleepStartTime,
       sleepEndTime,
-      occupiedHourBlocks,
     );
     
     return availableSlots;
@@ -331,12 +331,11 @@ class AiScheduler {
   static void _findSlotsInWindow(
     DateTime windowStart,
     DateTime windowEnd,
-    List<_TimeSlot> scheduledSlots,
+    List<ScheduledTask> scheduledSlots,
     int taskDuration,
-    List<_TimeSlot> availableSlots,
+    List<TimeSlot> availableSlots,
     DateTime sleepStart,
     DateTime sleepEnd,
-    Set<int> occupiedHourBlocks,
   ) {
     DateTime currentTime = windowStart;
     
@@ -345,36 +344,28 @@ class AiScheduler {
       
       final slotEnd = currentTime.add(Duration(minutes: taskDuration));
       
-      // Get the hour blocks this slot would occupy
-      final slotStartHour = currentTime.hour;
-      final slotEndHour = slotEnd.hour;
-      final slotHours = <int>{slotStartHour};
-      
-      // If slot spans multiple hours, add all hours it occupies
-      if (slotEndHour != slotStartHour) {
-        for (int hour = slotStartHour + 1; hour <= slotEndHour; hour++) {
-          slotHours.add(hour);
-        }
-      }
-      
-      // Check if any of the slot hours are already occupied
-      final hasHourBlockConflict = slotHours.any((hour) => occupiedHourBlocks.contains(hour));
-      
       // Check if this slot overlaps with any scheduled slot
-      final hasTimeConflict = scheduledSlots.any((scheduled) =>
-          (currentTime.isBefore(scheduled.end) && slotEnd.isAfter(scheduled.start)));
+      final hasTimeConflict = scheduledSlots.any((scheduled) {
+        final scheduledStart = scheduled.start;
+        final scheduledEnd = scheduled.end;
+        
+        // Check for time overlap
+        final overlaps = (currentTime.isBefore(scheduledEnd) && slotEnd.isAfter(scheduledStart));
+        
+        if (overlaps) {
+          print('   - Time conflict: ${DateFormat('HH:mm').format(currentTime)}-${DateFormat('HH:mm').format(slotEnd)} overlaps with ${DateFormat('HH:mm').format(scheduledStart)}-${DateFormat('HH:mm').format(scheduledEnd)}');
+        }
+        
+        return overlaps;
+      });
       
       // Check if this slot overlaps with sleep time
       final overlapsSleep = (currentTime.isBefore(sleepEnd) && slotEnd.isAfter(sleepStart)) ||
                            (currentTime.isAfter(sleepStart) && currentTime.isBefore(sleepEnd));
       
-      if (!hasHourBlockConflict && !hasTimeConflict && !overlapsSleep) {
-        availableSlots.add(_TimeSlot(start: currentTime, end: slotEnd, taskId: ''));
-        dev.log('   - Available slot: ${DateFormat('HH:mm').format(currentTime)}-${DateFormat('HH:mm').format(slotEnd)} (Hours: $slotHours)', name: 'AiScheduler');
-      } else {
-        if (hasHourBlockConflict) {
-          dev.log('   - Skipped slot: ${DateFormat('HH:mm').format(currentTime)}-${DateFormat('HH:mm').format(slotEnd)} - Hour block conflict (Occupied hours: $occupiedHourBlocks)', name: 'AiScheduler');
-        }
+      if (!hasTimeConflict && !overlapsSleep) {
+        availableSlots.add(TimeSlot(start: currentTime, end: slotEnd));
+        print('   - ✅ Available slot: ${DateFormat('HH:mm').format(currentTime)}-${DateFormat('HH:mm').format(slotEnd)}');
       }
       
       // Move to next potential slot (15-minute increments)
@@ -390,17 +381,17 @@ class AiScheduler {
   }
 
   /* ----------------------------------------------------------
-   * 8. Chat-like prompt for single task with available slots
+   * 7. Chat-like prompt for single task with available slots
    * ---------------------------------------------------------- */
   static Future<String> chatSchedule(Task task, {Map<String, dynamic>? userPreferences}) async {
     final today = DateTime.now();
     
-    dev.log('🚀 STARTING SINGLE TASK SCHEDULING', name: 'AiScheduler');
-    dev.log('📋 TASK DETAILS:', name: 'AiScheduler');
-    dev.log('   - ID: ${task.id}', name: 'AiScheduler');
-    dev.log('   - Title: ${task.title}', name: 'AiScheduler');
-    dev.log('   - Duration: ${task.durationMin}min', name: 'AiScheduler');
-    dev.log('   - Priority: ${task.priority.name}', name: 'AiScheduler');
+    print('🚀 STARTING SINGLE TASK SCHEDULING');
+    print('📋 TASK DETAILS:');
+    print('   - ID: ${task.id}');
+    print('   - Title: ${task.title}');
+    print('   - Duration: ${task.durationMin}min');
+    print('   - Priority: ${task.priority.name}');
     
     // Get user data
     final userData = userPreferences != null ? 
@@ -420,7 +411,7 @@ class AiScheduler {
     );
     
     // Find available slots for each day
-    final availableSlotsByDay = <DateTime, List<_TimeSlot>>{};
+    final availableSlotsByDay = <DateTime, List<TimeSlot>>{};
     DateTime? firstAvailableDay;
     
     for (final entry in scheduledSlots.entries) {
@@ -436,9 +427,9 @@ class AiScheduler {
       if (slots.isNotEmpty) {
         availableSlotsByDay[date] = slots;
         firstAvailableDay ??= date;
-        dev.log('✅ Available slots on ${DateFormat('EEE, MMM d').format(date)}: ${slots.length}', name: 'AiScheduler');
+        print('✅ Available slots on ${DateFormat('EEE, MMM d').format(date)}: ${slots.length}');
       } else {
-        dev.log('❌ No available slots on ${DateFormat('EEE, MMM d').format(date)}', name: 'AiScheduler');
+        print('❌ No available slots on ${DateFormat('EEE, MMM d').format(date)}');
       }
     }
     
@@ -457,17 +448,17 @@ class AiScheduler {
       firstAvailableDay: firstAvailableDay!,
     );
     
-    dev.log('📤 SENDING PROMPT TO AI:', name: 'AiScheduler');
-    dev.log('```\n$prompt\n```', name: 'AiScheduler');
+    print('📤 SENDING PROMPT TO AI:');
+    print('```\n$prompt\n```');
 
     try {
       final resp = await gemini.generateContent([Content.text(prompt)]);
       final response = resp.text?.trim() ?? 'I need more information to schedule this task.';
-      dev.log('📥 AI RESPONSE:', name: 'AiScheduler');
-      dev.log('```\n$response\n```', name: 'AiScheduler');
+      print('📥 AI RESPONSE:');
+      print('```\n$response\n```');
       return response;
     } catch (e) {
-      dev.log('❌ Error in chatSchedule: $e', name: 'AiScheduler');
+      print('❌ Error in chatSchedule: $e');
       return 'I encountered an error while scheduling. Please try again.';
     }
   }
@@ -483,7 +474,7 @@ class AiScheduler {
     required Map<String, dynamic>? prefs,
     required Map<String, String> timeRanges,
     required bool isWorkTask,
-    required Map<DateTime, List<_TimeSlot>> availableSlotsByDay,
+    required Map<DateTime, List<TimeSlot>> availableSlotsByDay,
     required DateTime firstAvailableDay,
   }) {
     final buffer = StringBuffer()
@@ -530,7 +521,6 @@ class AiScheduler {
       ..writeln('5. Prefer earlier dates to meet the deadline')
       ..writeln('6. High priority tasks should get optimal focus hours')
       ..writeln('7. Consider user focus style: ${prefs?['focusStyle'] ?? "Flexible"}')
-      ..writeln('8. DO NOT schedule in hour blocks that already have tasks')
       ..writeln('')
       ..writeln('Reply with: "How about DATE at HH:MM-HH:MM? [Brief reason based on task type and preferences]"')
       ..writeln('Example: "How about ${DateFormat('EEE, MMM d').format(firstAvailableDay)} at 14:30-15:15? Perfect work hours slot for your project task."');
@@ -539,7 +529,7 @@ class AiScheduler {
   }
 
   /* ----------------------------------------------------------
-   * 9. Insert single slot
+   * 8. Insert single slot
    * ---------------------------------------------------------- */
   static Future<void> insertSingleSlot(
     Task task, 
@@ -549,11 +539,11 @@ class AiScheduler {
   ) async {
     final dateStr = DateFormat('yyyy-MM-dd').format(startTime);
 
-    dev.log('💾 INSERTING SCHEDULE SLOT:', name: 'AiScheduler');
-    dev.log('   - User ID: $userId', name: 'AiScheduler');
-    dev.log('   - Task: ${task.title}', name: 'AiScheduler');
-    dev.log('   - Time: ${DateFormat('HH:mm').format(startTime)}-${DateFormat('HH:mm').format(endTime)}', name: 'AiScheduler');
-    dev.log('   - Date: $dateStr', name: 'AiScheduler');
+    print('💾 INSERTING SCHEDULE SLOT:');
+    print('   - User ID: $userId');
+    print('   - Task: ${task.title}');
+    print('   - Time: ${DateFormat('HH:mm').format(startTime)}-${DateFormat('HH:mm').format(endTime)}');
+    print('   - Date: $dateStr');
 
     // Read existing schedule
     final schedSnap = await FirebaseFirestore.instance
@@ -564,7 +554,7 @@ class AiScheduler {
         .limit(1)
         .get();
 
-    dev.log('   - Existing schedules found: ${schedSnap.docs.length}', name: 'AiScheduler');
+    print('   - Existing schedules found: ${schedSnap.docs.length}');
 
     final List<Map<String, dynamic>> merged =
         schedSnap.docs.isEmpty ? [] : List.from(schedSnap.docs.first.data()['orderedTasks']);
@@ -586,17 +576,17 @@ class AiScheduler {
     };
 
     merged.add(newSlot);
-    dev.log('   - Added new slot: $newSlot', name: 'AiScheduler');
+    print('   - Added new slot: $newSlot');
 
     // Sort by start time
     merged.sort((a, b) => DateFormat('HH:mm')
         .parseUtc(a['start'])
         .compareTo(DateFormat('HH:mm').parseUtc(b['start'])));
 
-    dev.log('   - Final merged schedule has ${merged.length} tasks', name: 'AiScheduler');
+    print('   - Final merged schedule has ${merged.length} tasks');
 
     if (schedSnap.docs.isEmpty) {
-      dev.log('   - Creating new schedule document', name: 'AiScheduler');
+      print('   - Creating new schedule document');
       await FirebaseFirestore.instance.collection('schedules').add({
         'uid': userId,
         'scheduleDate': dateStr,
@@ -604,18 +594,18 @@ class AiScheduler {
         'createdAt': FieldValue.serverTimestamp(),
       });
     } else {
-      dev.log('   - Updating existing schedule document: ${schedSnap.docs.first.id}', name: 'AiScheduler');
+      print('   - Updating existing schedule document: ${schedSnap.docs.first.id}');
       await FirebaseFirestore.instance.collection('schedules').doc(schedSnap.docs.first.id).update({
         'orderedTasks': merged,
         'createdAt': FieldValue.serverTimestamp(),
       });
     }
 
-    dev.log('✅ Schedule saved successfully', name: 'AiScheduler');
+    print('✅ Schedule saved successfully');
   }
 
   /* ----------------------------------------------------------
-   * 10. Check if task can be scheduled (for reschedule flow)
+   * 9. Check if task can be scheduled (for reschedule flow)
    * ---------------------------------------------------------- */
   static Future<Map<String, dynamic>> checkSchedulingAvailability(Task task) async {
     final today = DateTime.now();
@@ -663,11 +653,24 @@ class AiScheduler {
   }
 }
 
-/* ---------- Helper class ---------- */
-class _TimeSlot {
+/* ---------- Helper classes ---------- */
+class ScheduledTask {
   final DateTime start;
   final DateTime end;
+  final int durationMin;
   final String taskId;
   
-  _TimeSlot({required this.start, required this.end, required this.taskId});
+  ScheduledTask({
+    required this.start,
+    required this.end,
+    required this.durationMin,
+    required this.taskId,
+  });
+}
+
+class TimeSlot {
+  final DateTime start;
+  final DateTime end;
+  
+  TimeSlot({required this.start, required this.end});
 }

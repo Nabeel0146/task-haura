@@ -42,6 +42,7 @@ dependencies:
   firebase_ai: ^3.3.0
   cached_network_image: ^3.2.3
   percent_indicator: ^4.2.2
+  voice_to_text: ^1.0.3
 
 dev_dependencies:
   flutter_test:

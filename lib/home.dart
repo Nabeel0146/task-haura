@@ -66,6 +66,7 @@ class AuthGate extends StatelessWidget {
     );
   }
 }
+
 /* =========================================================================
    HOME PAGE  –  TAG + STATUS FILTER + TRANSPARENT FLOATING BUTTONS
    ========================================================================= */
@@ -102,28 +103,27 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() => _userTags = tags.cast<String>());
   }
 
+  /* ------------ HANDLE TASK CHECK ------------ */
+  Future<void> _handleTaskCheck(Task task, String docId) async {
+    TaskStatus newStatus;
 
- /* ------------ HANDLE TASK CHECK ------------ */
-Future<void> _handleTaskCheck(Task task, String docId) async {
-  TaskStatus newStatus;
-  
-  switch (task.status) {
-    case TaskStatus.toStart:
-      newStatus = TaskStatus.onDoing;
-      break;
-    case TaskStatus.onDoing:
-      newStatus = TaskStatus.done;
-      break;
-    case TaskStatus.done:
-      newStatus = TaskStatus.done; // Stay done if already done
-      break;
-    case TaskStatus.skipped:
-      newStatus = TaskStatus.skipped; // Stay skipped if already skipped
-      break;
+    switch (task.status) {
+      case TaskStatus.toStart:
+        newStatus = TaskStatus.onDoing;
+        break;
+      case TaskStatus.onDoing:
+        newStatus = TaskStatus.done;
+        break;
+      case TaskStatus.done:
+        newStatus = TaskStatus.done; // Stay done if already done
+        break;
+      case TaskStatus.skipped:
+        newStatus = TaskStatus.skipped; // Stay skipped if already skipped
+        break;
+    }
+
+    await _db.doc(docId).update({'status': newStatus.name});
   }
-  
-  await _db.doc(docId).update({'status': newStatus.name});
-}
 
   /* ------------ TAG FILTER CHIPS ------------ */
   Widget _buildTagFilter() {
@@ -385,571 +385,580 @@ Future<void> _handleTaskCheck(Task task, String docId) async {
   }
 
 /* ------------ BUILD TASK LIST WITH CHECKBOXES AND AUTO-SKIP ------------ */
-Widget _buildTaskList() {
-  return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-    stream: _db
-        .where('uid', isEqualTo: _user.uid)
-        .orderBy('deadline')
-        .snapshots(),
-    builder: (_, snap) {
-      if (snap.hasError) return Center(child: Text('${snap.error}'));
-      if (!snap.hasData)
-        return const Center(child: CircularProgressIndicator());
+  Widget _buildTaskList() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _db
+          .where('uid', isEqualTo: _user.uid)
+          .orderBy('deadline')
+          .snapshots(),
+      builder: (_, snap) {
+        if (snap.hasError) return Center(child: Text('${snap.error}'));
+        if (!snap.hasData)
+          return const Center(child: CircularProgressIndicator());
 
-      final docs = snap.data!.docs;
-      final now = DateTime.now();
+        final docs = snap.data!.docs;
+        final now = DateTime.now();
 
-      // Check and update tasks with passed due dates
-      for (final doc in docs) {
-        final task = Task.fromDoc(doc);
-        final taskDeadline = task.deadline;
-        
-        // Only update if deadline has passed AND task is not already done/skipped
-        if (taskDeadline!.isBefore(DateTime(now.year, now.month, now.day)) &&
-            task.status != TaskStatus.done &&
-            task.status != TaskStatus.skipped) {
-          // Update status to skipped in Firestore
-          _db.doc(doc.id).update({'status': TaskStatus.skipped.name});
-        }
-      }
+        // Check and update tasks with passed due dates
+        for (final doc in docs) {
+          final task = Task.fromDoc(doc);
+          final taskDeadline = task.deadline;
 
-      // Apply both tag and status filters
-      final filtered = docs.where((d) {
-        final task = Task.fromDoc(d);
-
-        // Tag filter: 'All' or specific tag
-        final tagMatches = _selectedTag == 'All' || task.tag == _selectedTag;
-
-        // Status filter: only show tasks with the selected status
-        final statusMatches = task.status == _selectedStatus;
-
-        return tagMatches && statusMatches;
-      }).toList();
-
-      if (filtered.isEmpty) {
-        return Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                _statusIcon(_selectedStatus),
-                size: 64,
-                color: Colors.grey[400],
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'No ${_statusName(_selectedStatus)} tasks',
-                style: TextStyle(
-                  fontSize: 18,
-                  color: Colors.grey[600],
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _selectedTag == 'All'
-                    ? 'Try changing filters or add new tasks'
-                    : 'No ${_statusName(_selectedStatus)} tasks with tag "$_selectedTag"',
-                style: TextStyle(
-                  color: Colors.grey[500],
-                  fontSize: 14,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        );
-      }
-
-      return ListView.builder(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
-        itemCount: filtered.length,
-        itemBuilder: (_, i) {
-          final task = Task.fromDoc(filtered[i]);
-          final docId = filtered[i].id;
-          
-          // For skipped tasks, show reschedule option
-          if (_selectedStatus == TaskStatus.skipped) {
-            return _buildSkippedTaskWithReschedule(task, docId);
-          } else {
-            return Dismissible(
-              key: Key(task.id),
-              background: Container(color: Colors.red),
-              onDismissed: (_) => _deleteTask(task.id),
-              child: TaskCard(
-                task: task,
-                onEdit: () => _showEditSheet(task, docId),
-                onDelete: () => _deleteTask(task.id),
-                onCheck: () => _handleTaskCheck(task, docId),
-              ),
-            );
+          // Only update if deadline has passed AND task is not already done/skipped
+          if (taskDeadline!.isBefore(DateTime(now.year, now.month, now.day)) &&
+              task.status != TaskStatus.done &&
+              task.status != TaskStatus.skipped) {
+            // Update status to skipped in Firestore
+            _db.doc(doc.id).update({'status': TaskStatus.skipped.name});
           }
-        },
-      );
-    },
-  );
-}
+        }
+
+        // Apply both tag and status filters
+        final filtered = docs.where((d) {
+          final task = Task.fromDoc(d);
+
+          // Tag filter: 'All' or specific tag
+          final tagMatches = _selectedTag == 'All' || task.tag == _selectedTag;
+
+          // Status filter: only show tasks with the selected status
+          final statusMatches = task.status == _selectedStatus;
+
+          return tagMatches && statusMatches;
+        }).toList();
+
+        if (filtered.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  _statusIcon(_selectedStatus),
+                  size: 64,
+                  color: Colors.grey[400],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'No ${_statusName(_selectedStatus)} tasks',
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _selectedTag == 'All'
+                      ? 'Try changing filters or add new tasks'
+                      : 'No ${_statusName(_selectedStatus)} tasks with tag "$_selectedTag"',
+                  style: TextStyle(
+                    color: Colors.grey[500],
+                    fontSize: 14,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
+          itemCount: filtered.length,
+          itemBuilder: (_, i) {
+            final task = Task.fromDoc(filtered[i]);
+            final docId = filtered[i].id;
+
+            // For skipped tasks, show reschedule option
+            if (_selectedStatus == TaskStatus.skipped) {
+              return _buildSkippedTaskWithReschedule(task, docId);
+            } else {
+              return Dismissible(
+                key: Key(task.id),
+                background: Container(color: Colors.red),
+                onDismissed: (_) => _deleteTask(task.id),
+                child: TaskCard(
+                  task: task,
+                  onEdit: () => _showEditSheet(task, docId),
+                  onDelete: () => _deleteTask(task.id),
+                  onCheck: () => _handleTaskCheck(task, docId),
+                ),
+              );
+            }
+          },
+        );
+      },
+    );
+  }
 
 /* ------------ BUILD SKIPPED TASK WITH RESCHEDULE OPTION ------------ */
-Widget _buildSkippedTaskWithReschedule(Task task, String docId) {
-  final suggestedDate = _getSuggestedRescheduleDate(task.deadline!);
-  
-  return Column(
-    children: [
-      Dismissible(
-        key: Key(task.id),
-        background: Container(color: Colors.red),
-        onDismissed: (_) => _deleteTask(task.id),
-        child: TaskCard(
-          task: task,
-          onEdit: () => _showEditSheet(task, docId),
-          onDelete: () => _deleteTask(task.id),
-          onCheck: () => _handleTaskCheck(task, docId),
-        ),
-      ),
-      // Reschedule suggestion container
-      Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.blue[50],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.blue[100]!),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.schedule, color: Colors.blue[600], size: 18),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Suggested reschedule:',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.blue[800],
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  Text(
-                    DateFormat('EEE, MMM d, yyyy').format(suggestedDate),
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.blue[700],
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            ElevatedButton(
-              onPressed: () => _confirmReschedule(task, docId, suggestedDate),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue[600],
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ),
-              child: const Text(
-                'Reschedule',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-              ),
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 8),
-    ],
-  );
-}
+  Widget _buildSkippedTaskWithReschedule(Task task, String docId) {
+    final suggestedDate = _getSuggestedRescheduleDate(task.deadline!);
 
-/* ------------ GET SUGGESTED RESCHEDULE DATE ------------ */
-DateTime _getSuggestedRescheduleDate(DateTime originalDeadline) {
-  final now = DateTime.now();
-  final daysSinceDeadline = now.difference(originalDeadline).inDays;
-  
-  // If deadline was very recent (within 3 days), suggest tomorrow
-  if (daysSinceDeadline >= -3 && daysSinceDeadline <= 0) {
-    return now.add(const Duration(days: 1));
-  }
-  
-  // If deadline was further in the past, suggest 2 days from now
-  return now.add(const Duration(days: 2));
-}
-
-/* ------------ CONFIRM AND RESCHEDULE TASK ------------ */
-Future<void> _confirmReschedule(Task task, String docId, DateTime suggestedDate) async {
-  DateTime selectedDate = suggestedDate;
-  
-  await showDialog<bool>(
-    context: context,
-    builder: (_) => StatefulBuilder(
-      builder: (context, setState) {
-        return AlertDialog(
-          title: const Text('Reschedule Task'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      children: [
+        Dismissible(
+          key: Key(task.id),
+          background: Container(color: Colors.red),
+          onDismissed: (_) => _deleteTask(task.id),
+          child: TaskCard(
+            task: task,
+            onEdit: () => _showEditSheet(task, docId),
+            onDelete: () => _deleteTask(task.id),
+            onCheck: () => _handleTaskCheck(task, docId),
+          ),
+        ),
+        // Reschedule suggestion container
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.blue[50],
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.blue[100]!),
+          ),
+          child: Row(
             children: [
-              Text(
-                'Task: ${task.title}',
-                style: const TextStyle(fontWeight: FontWeight.w500),
-              ),
-              const SizedBox(height: 16),
-              
-              // Current deadline
-              Row(
-                children: [
-                  const Text(
-                    'Original deadline: ',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  Text(
-                    DateFormat('MMM d, yyyy').format(task.deadline!),
-                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              
-              // Date picker section
-              const Text(
-                'Choose new due date:',
-                style: TextStyle(fontWeight: FontWeight.w500),
-              ),
-              const SizedBox(height: 8),
-              
-              // Date selection field
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey[300]!),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              Icon(Icons.schedule, color: Colors.blue[600], size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      DateFormat('EEE, MMM d, yyyy').format(selectedDate),
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                      'Suggested reschedule:',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.blue[800],
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.calendar_today, size: 20),
-                      onPressed: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: selectedDate,
-                          firstDate: DateTime.now(),
-                          lastDate: DateTime.now().add(const Duration(days: 365)),
-                        );
-                        if (picked != null) {
-                          setState(() => selectedDate = picked);
-                        }
-                      },
+                    Text(
+                      DateFormat('EEE, MMM d, yyyy').format(suggestedDate),
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.blue[700],
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 8),
-              
-              // Quick date options
-              Row(
-                children: [
-                  _buildQuickDateOption(
-                    'Tomorrow', 
-                    DateTime.now().add(const Duration(days: 1)), 
-                    selectedDate, 
-                    (newDate) => setState(() => selectedDate = newDate)
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: () => _confirmReschedule(task, docId, suggestedDate),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue[600],
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6),
                   ),
-                  const SizedBox(width: 8),
-                  _buildQuickDateOption(
-                    'In 3 days', 
-                    DateTime.now().add(const Duration(days: 3)), 
-                    selectedDate, 
-                    (newDate) => setState(() => selectedDate = newDate)
-                  ),
-                  const SizedBox(width: 8),
-                  _buildQuickDateOption(
-                    'Next week', 
-                    DateTime.now().add(const Duration(days: 7)), 
-                    selectedDate, 
-                    (newDate) => setState(() => selectedDate = newDate)
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              
-              const Text(
-                'This will update the task status to "To Start" and open AI scheduling to find the best time slot.',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                child: const Text(
+                  'Reschedule',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                ),
               ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('CANCEL'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[600]),
-              child: const Text('RESCHEDULE'),
-            ),
-          ],
-        );
-      },
-    ),
-  ).then((confirmed) async {
-    if (confirmed == true) {
-      await _processReschedule(task, docId, selectedDate);
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+/* ------------ GET SUGGESTED RESCHEDULE DATE ------------ */
+  DateTime _getSuggestedRescheduleDate(DateTime originalDeadline) {
+    final now = DateTime.now();
+    final daysSinceDeadline = now.difference(originalDeadline).inDays;
+
+    // If deadline was very recent (within 3 days), suggest tomorrow
+    if (daysSinceDeadline >= -3 && daysSinceDeadline <= 0) {
+      return now.add(const Duration(days: 1));
     }
-  });
-}
+
+    // If deadline was further in the past, suggest 2 days from now
+    return now.add(const Duration(days: 2));
+  }
+
+/* ------------ CONFIRM AND RESCHEDULE TASK ------------ */
+  Future<void> _confirmReschedule(
+      Task task, String docId, DateTime suggestedDate) async {
+    DateTime selectedDate = suggestedDate;
+
+    await showDialog<bool>(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('Reschedule Task'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Task: ${task.title}',
+                  style: const TextStyle(fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 16),
+
+                // Current deadline
+                Row(
+                  children: [
+                    const Text(
+                      'Original deadline: ',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    Text(
+                      DateFormat('MMM d, yyyy').format(task.deadline!),
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // Date picker section
+                const Text(
+                  'Choose new due date:',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 8),
+
+                // Date selection field
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey[300]!),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        DateFormat('EEE, MMM d, yyyy').format(selectedDate),
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w500),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.calendar_today, size: 20),
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: selectedDate,
+                            firstDate: DateTime.now(),
+                            lastDate:
+                                DateTime.now().add(const Duration(days: 365)),
+                          );
+                          if (picked != null) {
+                            setState(() => selectedDate = picked);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Quick date options
+                Row(
+                  children: [
+                    _buildQuickDateOption(
+                        'Tomorrow',
+                        DateTime.now().add(const Duration(days: 1)),
+                        selectedDate,
+                        (newDate) => setState(() => selectedDate = newDate)),
+                    const SizedBox(width: 8),
+                    _buildQuickDateOption(
+                        'In 3 days',
+                        DateTime.now().add(const Duration(days: 3)),
+                        selectedDate,
+                        (newDate) => setState(() => selectedDate = newDate)),
+                    const SizedBox(width: 8),
+                    _buildQuickDateOption(
+                        'Next week',
+                        DateTime.now().add(const Duration(days: 7)),
+                        selectedDate,
+                        (newDate) => setState(() => selectedDate = newDate)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                const Text(
+                  'This will update the task status to "To Start" and open AI scheduling to find the best time slot.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('CANCEL'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                style:
+                    ElevatedButton.styleFrom(backgroundColor: Colors.blue[600]),
+                child: const Text('RESCHEDULE'),
+              ),
+            ],
+          );
+        },
+      ),
+    ).then((confirmed) async {
+      if (confirmed == true) {
+        await _processReschedule(task, docId, selectedDate);
+      }
+    });
+  }
 
 /* ------------ PROCESS RESCHEDULE ------------ */
-Future<void> _processReschedule(Task task, String docId, DateTime newDate) async {
-  try {
-    // Update task with new deadline and reset status
-    await _db.doc(docId).update({
-      'deadline': Timestamp.fromDate(newDate),
-      'status': TaskStatus.toStart.name,
-    });
+  Future<void> _processReschedule(
+      Task task, String docId, DateTime newDate) async {
+    try {
+      // Update task with new deadline and reset status
+      await _db.doc(docId).update({
+        'deadline': Timestamp.fromDate(newDate),
+        'status': TaskStatus.toStart.name,
+      });
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Task rescheduled to ${DateFormat('MMM d, yyyy').format(newDate)}!'),
-          backgroundColor: Colors.green,
-        ),
-      );
-      
-      // Open AI scheduling for this task
-      await _openAiScheduling(task);
-    }
-  } catch (e) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to reschedule: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-}
-
-/* ------------ OPEN AI SCHEDULING FOR TASK ------------ */
-Future<void> _openAiScheduling(Task task) async {
-  try {
-    // Show loading dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const AlertDialog(
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('AI is finding the best time slot for your task...'),
-          ],
-        ),
-      ),
-    );
-
-    // Get AI scheduling suggestion
-    final aiResponse = await AiScheduler.chatSchedule(task);
-    
-    if (mounted) {
-      Navigator.of(context).pop(); // Close loading dialog
-      
-      // Show AI scheduling suggestion for confirmation
-      await _showAiScheduleConfirmation(task, aiResponse);
-    }
-  } catch (e) {
-    if (mounted) {
-      Navigator.of(context).pop(); // Close loading dialog
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('AI scheduling failed: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-}
-
-/* ------------ SHOW AI SCHEDULE CONFIRMATION ------------ */
-Future<void> _showAiScheduleConfirmation(Task task, String aiResponse) async {
-  // Parse the AI response to extract time suggestion
-  final timeMatch = RegExp(r'(\d{1,2}:\d{2})-(\d{1,2}:\d{2})').firstMatch(aiResponse);
-  final reasonMatch = RegExp(r'\?([^"]+)').firstMatch(aiResponse);
-  
-  String timeSuggestion = 'Unable to parse time';
-  String reason = 'AI suggested time slot';
-  
-  if (timeMatch != null) {
-    final startTime24 = timeMatch.group(1)!;
-    final endTime24 = timeMatch.group(2)!;
-    
-    // Convert 24-hour format to 12-hour format
-    final startTime12 = _convertTo12HourFormat(startTime24);
-    final endTime12 = _convertTo12HourFormat(endTime24);
-    
-    timeSuggestion = '$startTime12-$endTime12';
-  }
-  if (reasonMatch != null) {
-    reason = reasonMatch.group(1)?.trim() ?? 'AI suggested time slot';
-  }
-
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (_) => AlertDialog(
-      title: const Text('AI Schedule Suggestion'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Task: ${task.title}', style: const TextStyle(fontWeight: FontWeight.w500)),
-          const SizedBox(height: 12),
-          Text('Suggested Time: $timeSuggestion', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          Text('Reason: $reason', style: const TextStyle(fontSize: 14, color: Colors.grey)),
-          const SizedBox(height: 16),
-          const Text(
-            'Would you like to add this to your schedule?',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('NO THANKS'),
-        ),
-        ElevatedButton(
-          onPressed: () => Navigator.of(context).pop(true),
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-          child: const Text('ADD TO SCHEDULE'),
-        ),
-      ],
-    ),
-  );
-
-  if (confirmed == true) {
-    await _addToAiSchedule(task, aiResponse);
-  }
-}
-
-/* ------------ CONVERT 24-HOUR FORMAT TO 12-HOUR FORMAT ------------ */
-String _convertTo12HourFormat(String time24) {
-  try {
-    final parts = time24.split(':');
-    if (parts.length != 2) return time24;
-    
-    int hour = int.parse(parts[0]);
-    final minute = parts[1];
-    
-    String period = 'AM';
-    
-    if (hour >= 12) {
-      period = 'PM';
-      if (hour > 12) hour -= 12;
-    }
-    if (hour == 0) hour = 12;
-    
-    return '$hour:$minute $period';
-  } catch (e) {
-    return time24; // Return original if parsing fails
-  }
-}
-
-/* ------------ ADD TASK TO AI SCHEDULE ------------ */
-Future<void> _addToAiSchedule(Task task, String aiResponse) async {
-  try {
-    // Parse the time from AI response
-    final timeMatch = RegExp(r'(\d{1,2}:\d{2})-(\d{1,2}:\d{2})').firstMatch(aiResponse);
-    
-    if (timeMatch != null) {
-      final startTimeStr = timeMatch.group(1)!;
-      final endTimeStr = timeMatch.group(2)!;
-      
-      final today = DateTime.now();
-      final startTime = DateFormat('HH:mm').parse(startTimeStr);
-      final endTime = DateFormat('HH:mm').parse(endTimeStr);
-      
-      final startDateTime = DateTime(today.year, today.month, today.day, startTime.hour, startTime.minute);
-      final endDateTime = DateTime(today.year, today.month, today.day, endTime.hour, endTime.minute);
-      
-      // Use the existing AiScheduler.insertSingleSlot method
-      await AiScheduler.insertSingleSlot(
-        task,
-        startDateTime,
-        endDateTime,
-        userId: _user.uid,
-      );
-      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Task successfully added to your schedule!'),
+          SnackBar(
+            content: Text(
+                'Task rescheduled to ${DateFormat('MMM d, yyyy').format(newDate)}!'),
             backgroundColor: Colors.green,
           ),
         );
+
+        // Open AI scheduling for this task
+        await _openAiScheduling(task);
       }
-    } else {
-      throw Exception('Could not parse time from AI response');
-    }
-  } catch (e) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to add to schedule: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to reschedule: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
-}
+
+/* ------------ OPEN AI SCHEDULING FOR TASK ------------ */
+  Future<void> _openAiScheduling(Task task) async {
+    try {
+      // Show loading dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('AI is finding the best time slot for your task...'),
+            ],
+          ),
+        ),
+      );
+
+      // Get AI scheduling suggestion
+      final aiResponse = await AiScheduler.chatSchedule(task);
+
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+
+        // Show AI scheduling suggestion for confirmation
+        await _showAiScheduleConfirmation(task, aiResponse);
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('AI scheduling failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+/* ------------ SHOW AI SCHEDULE CONFIRMATION ------------ */
+  Future<void> _showAiScheduleConfirmation(Task task, String aiResponse) async {
+    // Parse the AI response to extract time suggestion
+    final timeMatch =
+        RegExp(r'(\d{1,2}:\d{2})-(\d{1,2}:\d{2})').firstMatch(aiResponse);
+    final reasonMatch = RegExp(r'\?([^"]+)').firstMatch(aiResponse);
+
+    String timeSuggestion = 'Unable to parse time';
+    String reason = 'AI suggested time slot';
+
+    if (timeMatch != null) {
+      final startTime24 = timeMatch.group(1)!;
+      final endTime24 = timeMatch.group(2)!;
+
+      // Convert 24-hour format to 12-hour format
+      final startTime12 = _convertTo12HourFormat(startTime24);
+      final endTime12 = _convertTo12HourFormat(endTime24);
+
+      timeSuggestion = '$startTime12-$endTime12';
+    }
+    if (reasonMatch != null) {
+      reason = reasonMatch.group(1)?.trim() ?? 'AI suggested time slot';
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('AI Schedule Suggestion'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Task: ${task.title}',
+                style: const TextStyle(fontWeight: FontWeight.w500)),
+            const SizedBox(height: 12),
+            Text('Suggested Time: $timeSuggestion',
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text('Reason: $reason',
+                style: const TextStyle(fontSize: 14, color: Colors.grey)),
+            const SizedBox(height: 16),
+            const Text(
+              'Would you like to add this to your schedule?',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('NO THANKS'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            child: const Text('ADD TO SCHEDULE'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _addToAiSchedule(task, aiResponse);
+    }
+  }
+
+/* ------------ CONVERT 24-HOUR FORMAT TO 12-HOUR FORMAT ------------ */
+  String _convertTo12HourFormat(String time24) {
+    try {
+      final parts = time24.split(':');
+      if (parts.length != 2) return time24;
+
+      int hour = int.parse(parts[0]);
+      final minute = parts[1];
+
+      String period = 'AM';
+
+      if (hour >= 12) {
+        period = 'PM';
+        if (hour > 12) hour -= 12;
+      }
+      if (hour == 0) hour = 12;
+
+      return '$hour:$minute $period';
+    } catch (e) {
+      return time24; // Return original if parsing fails
+    }
+  }
+
+/* ------------ ADD TASK TO AI SCHEDULE ------------ */
+  Future<void> _addToAiSchedule(Task task, String aiResponse) async {
+    try {
+      // Parse the time from AI response
+      final timeMatch =
+          RegExp(r'(\d{1,2}:\d{2})-(\d{1,2}:\d{2})').firstMatch(aiResponse);
+
+      if (timeMatch != null) {
+        final startTimeStr = timeMatch.group(1)!;
+        final endTimeStr = timeMatch.group(2)!;
+
+        final today = DateTime.now();
+        final startTime = DateFormat('HH:mm').parse(startTimeStr);
+        final endTime = DateFormat('HH:mm').parse(endTimeStr);
+
+        final startDateTime = DateTime(today.year, today.month, today.day,
+            startTime.hour, startTime.minute);
+        final endDateTime = DateTime(
+            today.year, today.month, today.day, endTime.hour, endTime.minute);
+
+        // Use the existing AiScheduler.insertSingleSlot method
+        await AiScheduler.insertSingleSlot(
+          task,
+          startDateTime,
+          endDateTime,
+          userId: _user.uid,
+        );
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Task successfully added to your schedule!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        throw Exception('Could not parse time from AI response');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to schedule: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
 
 /* ------------ BUILD QUICK DATE OPTION CHIP ------------ */
-Widget _buildQuickDateOption(String label, DateTime date, DateTime selectedDate, Function(DateTime) onDateSelected) {
-  final isSelected = selectedDate.year == date.year && 
-                    selectedDate.month == date.month && 
-                    selectedDate.day == date.day;
-  
-  return GestureDetector(
-    onTap: () => onDateSelected(date),
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: isSelected ? Colors.blue[100] : Colors.grey[100],
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: isSelected ? Colors.blue[300]! : Colors.grey[300]!,
+  Widget _buildQuickDateOption(String label, DateTime date,
+      DateTime selectedDate, Function(DateTime) onDateSelected) {
+    final isSelected = selectedDate.year == date.year &&
+        selectedDate.month == date.month &&
+        selectedDate.day == date.day;
+
+    return GestureDetector(
+      onTap: () => onDateSelected(date),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue[100] : Colors.grey[100],
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isSelected ? Colors.blue[300]! : Colors.grey[300]!,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            color: isSelected ? Colors.blue[800] : Colors.grey[700],
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+          ),
         ),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 10,
-          color: isSelected ? Colors.blue[800] : Colors.grey[700],
-          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-        ),
-      ),
-    ),
-  );
+    );
+  }
 }
-
-}
-
-/* =========================================================================
-   BOTTOM SHEET  –  NULL-SAFE
-   ========================================================================= */
 class TaskBottomSheet extends StatefulWidget {
   final Task? existingTask;
   final String uid;
@@ -966,6 +975,9 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
   late final TextEditingController _durationCtrl;
   late DateTime _deadline;
   late Priority _priority;
+  late bool _repeatingTask;
+  bool _showRepeatingPrompt = false;
+  List<DocumentSnapshot> _existingTasks = [];
 
   @override
   void initState() {
@@ -977,6 +989,43 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
     _deadline = widget.existingTask?.deadline ??
         DateTime.now().add(const Duration(days: 1));
     _priority = widget.existingTask?.priority ?? Priority.medium;
+    _repeatingTask = widget.existingTask?.repeatingTask ?? false;
+    
+    // Check for existing tasks when creating new task
+    if (widget.existingTask == null) {
+      _checkForExistingTasks();
+    }
+  }
+
+  Future<void> _checkForExistingTasks() async {
+    if (_titleCtrl.text.trim().isEmpty) return;
+    
+    final snap = await FirebaseFirestore.instance
+        .collection('tasks')
+        .where('uid', isEqualTo: widget.uid)
+        .where('title', isEqualTo: _titleCtrl.text.trim())
+        .get();
+        
+    if (mounted) {
+      setState(() {
+        _existingTasks = snap.docs;
+        _showRepeatingPrompt = snap.docs.isNotEmpty && !_repeatingTask;
+      });
+    }
+  }
+
+  void _enableRepeatingTask() {
+    setState(() {
+      _repeatingTask = true;
+      _showRepeatingPrompt = false;
+    });
+  }
+
+  void _skipRepeatingTask() {
+    setState(() {
+      _repeatingTask = false;
+      _showRepeatingPrompt = false;
+    });
   }
 
   @override
@@ -986,8 +1035,6 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
     _durationCtrl.dispose();
     super.dispose();
   }
-
-  
 
   Future<void> _pickDeadline() async {
     final picked = await showDatePicker(
@@ -999,8 +1046,6 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
     if (picked != null) setState(() => _deadline = picked);
   }
 
-/* ------------ OPEN FULL-SCREEN AI ASSISTANT ------------ */
-
   void _submit() {
     if (_formKey.currentState!.validate()) {
       final task = Task(
@@ -1011,6 +1056,10 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
         deadline: _deadline,
         priority: _priority,
         uid: widget.uid,
+        status: widget.existingTask?.status ?? TaskStatus.toStart,
+        tag: widget.existingTask?.tag ?? '',
+        createdAt: widget.existingTask?.createdAt,
+        repeatingTask: _repeatingTask,
       );
       Navigator.of(context).pop(task);
     }
@@ -1034,10 +1083,76 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
               Text(widget.existingTask == null ? 'Add task' : 'Edit task',
                   style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 20),
+              
+              // Repeating task prompt
+              if (_showRepeatingPrompt) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue[100]!),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.repeat, color: Colors.blue[600], size: 20),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Similar task found',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: Colors.blue,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'You\'ve created "${_titleCtrl.text.trim()}" ${_existingTasks.length} time(s) before. Is this a repeating task/habit?',
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: _skipRepeatingTask,
+                              child: const Text('No, just once'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: _enableRepeatingTask,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue[600],
+                              ),
+                              child: const Text('Yes, habit'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              
               TextFormField(
                 controller: _titleCtrl,
                 decoration: const InputDecoration(labelText: 'Title'),
                 validator: (v) => v!.trim().isEmpty ? 'Required' : null,
+                onChanged: (value) {
+                  if (widget.existingTask == null) {
+                    // Debounce the search to avoid too many queries
+                    Future.delayed(const Duration(milliseconds: 500), () {
+                      _checkForExistingTasks();
+                    });
+                  }
+                },
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -1072,6 +1187,19 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
                 onChanged: (v) => setState(() => _priority = v!),
                 decoration: const InputDecoration(labelText: 'Priority'),
               ),
+              const SizedBox(height: 12),
+              
+              // Repeating task toggle (only show if not in prompt mode)
+              if (!_showRepeatingPrompt) 
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Repeating Task/Habit'),
+                  subtitle: const Text('Mark this as a recurring task'),
+                  value: _repeatingTask,
+                  onChanged: (value) => setState(() => _repeatingTask = value),
+                  secondary: const Icon(Icons.repeat),
+                ),
+              
               const SizedBox(height: 24),
               FilledButton.tonalIcon(
                 icon: const Icon(Icons.save),
@@ -1085,4 +1213,5 @@ class _TaskBottomSheetState extends State<TaskBottomSheet> {
       ),
     );
   }
+
 }

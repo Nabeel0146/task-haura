@@ -14,6 +14,7 @@ class Task {
   final TaskStatus    status;
   final String        tag;
   final DateTime?     createdAt;          // ← creation time
+  final bool          repeatingTask;      // ← NEW FIELD
 
   const Task({
     this.id          = '',
@@ -26,7 +27,39 @@ class Task {
     this.status      = TaskStatus.toStart,
     this.tag         = '',
     this.createdAt,
+    this.repeatingTask = false,           // ← NEW FIELD with default value
   });
+
+  /* ----------------------------------------------------------------- */
+  /*  CopyWith Method                                                  */
+  /* ----------------------------------------------------------------- */
+  Task copyWith({
+    String? id,
+    String? title,
+    String? desc,
+    int? durationMin,
+    DateTime? deadline,
+    Priority? priority,
+    String? uid,
+    TaskStatus? status,
+    String? tag,
+    DateTime? createdAt,
+    bool? repeatingTask,
+  }) {
+    return Task(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      desc: desc ?? this.desc,
+      durationMin: durationMin ?? this.durationMin,
+      deadline: deadline ?? this.deadline,
+      priority: priority ?? this.priority,
+      uid: uid ?? this.uid,
+      status: status ?? this.status,
+      tag: tag ?? this.tag,
+      createdAt: createdAt ?? this.createdAt,
+      repeatingTask: repeatingTask ?? this.repeatingTask,
+    );
+  }
 
   /* ----------------------------------------------------------------- */
   /*  Firestore → Dart                                                 */
@@ -44,6 +77,7 @@ class Task {
       status:      TaskStatus.values.byName(data['status'] ?? 'toStart'),
       tag:         data['tag']     ?? '',
       createdAt:   (data['createdAt'] as Timestamp?)?.toDate(),
+      repeatingTask: data['repeatingTask'] ?? false,  // ← NEW FIELD
     );
   }
 
@@ -60,7 +94,8 @@ class Task {
       'uid':        uid,
       'status':     status.name,
       'tag':        tag,
-      'createdAt':  FieldValue.serverTimestamp(),   // ← server time
+      'createdAt':  FieldValue.serverTimestamp(),
+      'repeatingTask': repeatingTask,  // ← NEW FIELD
     };
   }
 }

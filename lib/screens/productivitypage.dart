@@ -15,9 +15,9 @@ class ProductivityPage extends StatefulWidget {
 
 class _ProductivityPageState extends State<ProductivityPage> {
   final User? _user = FirebaseAuth.instance.currentUser;
-  List<TaskStats> _tasks = [];
-  List<DoneTask> _doneTasks = [];
-  List<SkippedTask> _skippedTasks = [];
+  List<TaskStats> _allTasks = [];
+  List<TaskStats> _completedTasks = [];
+  List<TaskStats> _skippedTasks = [];
   bool _loading = true;
 
   @override
@@ -32,22 +32,17 @@ class _ProductivityPageState extends State<ProductivityPage> {
       return;
     }
 
-    await Future.wait([
-      _loadTasks(),
-      _loadDoneTasks(),
-      _loadSkippedTasks(),
-    ]);
-    
+    await _loadAllTasks();
     setState(() => _loading = false);
   }
 
-  Future<void> _loadTasks() async {
+  Future<void> _loadAllTasks() async {
     final snapshot = await FirebaseFirestore.instance
         .collection('tasks')
         .where('uid', isEqualTo: _user!.uid)
         .get();
 
-    final tasks = snapshot.docs.map((doc) {
+    final allTasks = snapshot.docs.map((doc) {
       final data = doc.data();
       return TaskStats(
         id: doc.id,
@@ -56,58 +51,27 @@ class _ProductivityPageState extends State<ProductivityPage> {
         tag: data['tag'] ?? '',
         durationMin: (data['durationMin'] as num?)?.toInt() ?? 0,
         createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-        completedAt: (data['completedAt'] as Timestamp?)?.toDate(),
-      );
-    }).toList();
-
-    setState(() => _tasks = tasks);
-  }
-
-  Future<void> _loadDoneTasks() async {
-    final snapshot = await FirebaseFirestore.instance
-        .collection('doneTasks')
-        .where('uid', isEqualTo: _user!.uid)
-        .get();
-
-    final doneTasks = snapshot.docs.map((doc) {
-      final data = doc.data();
-      return DoneTask(
-        id: doc.id,
-        title: data['title'] ?? '',
-        durationMin: (data['durationMin'] as num?)?.toInt() ?? 0,
-        completedAt: (data['completedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-        priority: data['priority'] ?? 'medium',
-        scheduledStart: data['start'] ?? '',
-      );
-    }).toList();
-
-    setState(() => _doneTasks = doneTasks);
-  }
-
-  Future<void> _loadSkippedTasks() async {
-    final snapshot = await FirebaseFirestore.instance
-        .collection('deletedTasks')
-        .where('uid', isEqualTo: _user!.uid)
-        .get();
-
-    final skippedTasks = snapshot.docs.map((doc) {
-      final data = doc.data();
-      return SkippedTask(
-        id: doc.id,
-        title: data['title'] ?? '',
-        durationMin: (data['durationMin'] as num?)?.toInt() ?? 0,
-        deletedAt: (data['deletedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+        deadline: (data['deadline'] as Timestamp?)?.toDate(),
         priority: data['priority'] ?? 'medium',
       );
     }).toList();
 
-    setState(() => _skippedTasks = skippedTasks);
+    // Separate completed and skipped tasks
+    final completedTasks = allTasks.where((task) => task.status == TaskStatus.done).toList();
+    final skippedTasks = allTasks.where((task) => task.status == TaskStatus.skipped).toList();
+
+    setState(() {
+      _allTasks = allTasks;
+      _completedTasks = completedTasks;
+      _skippedTasks = skippedTasks;
+    });
   }
 
   TaskStatus _parseStatus(String status) {
     switch (status) {
       case 'done': return TaskStatus.done;
       case 'onDoing': return TaskStatus.onDoing;
+      case 'skipped': return TaskStatus.skipped;
       default: return TaskStatus.toStart;
     }
   }
@@ -116,77 +80,82 @@ class _ProductivityPageState extends State<ProductivityPage> {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     
-    // Today's tasks from doneTasks collection
-    final todayDoneTasks = _doneTasks.where((task) {
-      final taskDate = DateTime(task.completedAt.year, task.completedAt.month, task.completedAt.day);
+    // Today's completed tasks
+    final todayCompletedTasks = _completedTasks.where((task) {
+      // Use createdAt as completion time for done tasks
+      final taskDate = DateTime(task.createdAt.year, task.createdAt.month, task.createdAt.day);
       return taskDate == today;
     }).toList();
 
-    final completedToday = todayDoneTasks.length;
-    final totalToday = completedToday + _skippedTasks.where((task) {
-      final taskDate = DateTime(task.deletedAt.year, task.deletedAt.month, task.deletedAt.day);
+    // Today's skipped tasks
+    final todaySkippedTasks = _skippedTasks.where((task) {
+      final taskDate = DateTime(task.createdAt.year, task.createdAt.month, task.createdAt.day);
       return taskDate == today;
-    }).length;
+    }).toList();
+
+    final completedToday = todayCompletedTasks.length;
+    final skippedToday = todaySkippedTasks.length;
+    final totalToday = completedToday + skippedToday;
 
     final completionRate = totalToday > 0 ? completedToday / totalToday : 0.0;
 
     // Weekly stats
     final weekStart = today.subtract(Duration(days: today.weekday - 1));
-    final weekDoneTasks = _doneTasks.where((task) {
-      final taskDate = DateTime(task.completedAt.year, task.completedAt.month, task.completedAt.day);
+    final weekCompletedTasks = _completedTasks.where((task) {
+      final taskDate = DateTime(task.createdAt.year, task.createdAt.month, task.createdAt.day);
       return taskDate.isAfter(weekStart.subtract(const Duration(days: 1)));
     }).toList();
 
     final weekSkippedTasks = _skippedTasks.where((task) {
-      final taskDate = DateTime(task.deletedAt.year, task.deletedAt.month, task.deletedAt.day);
+      final taskDate = DateTime(task.createdAt.year, task.createdAt.month, task.createdAt.day);
       return taskDate.isAfter(weekStart.subtract(const Duration(days: 1)));
     }).toList();
 
-    final weeklyCompleted = weekDoneTasks.length;
-    final weeklyTotal = weeklyCompleted + weekSkippedTasks.length;
+    final weeklyCompleted = weekCompletedTasks.length;
+    final weeklySkipped = weekSkippedTasks.length;
+    final weeklyTotal = weeklyCompleted + weeklySkipped;
     final weeklyCompletionRate = weeklyTotal > 0 ? weeklyCompleted / weeklyTotal : 0.0;
 
-    // Calculate peak hours from done tasks
+    // Calculate peak hours from completed tasks
     final peakHours = _calculatePeakHours();
 
     // Calculate average focus hours (total completed task minutes / 60)
-    final totalFocusMinutes = _doneTasks.fold(0, (sum, task) => sum + task.durationMin);
-    final averageFocusHours = _doneTasks.isNotEmpty ? totalFocusMinutes / 60 / _doneTasks.length : 0.0;
+    final totalFocusMinutes = _completedTasks.fold(0, (sum, task) => sum + task.durationMin);
+    final averageFocusHours = _completedTasks.isNotEmpty ? totalFocusMinutes / 60 / _completedTasks.length : 0.0;
 
     // Tag distribution from all tasks
     final tagStats = <String, int>{};
-    for (final task in _tasks) {
+    for (final task in _allTasks) {
       if (task.tag.isNotEmpty) {
         tagStats[task.tag] = (tagStats[task.tag] ?? 0) + 1;
       }
     }
 
-    // Priority distribution from done tasks
+    // Priority distribution from completed tasks
     final priorityStats = <String, int>{};
-    for (final task in _doneTasks) {
+    for (final task in _completedTasks) {
       priorityStats[task.priority] = (priorityStats[task.priority] ?? 0) + 1;
     }
 
     // Tag completion stats
     final tagCompletionStats = <String, TagCompletion>{};
-    for (final task in _tasks) {
+    for (final task in _allTasks) {
       if (task.tag.isNotEmpty) {
         if (!tagCompletionStats.containsKey(task.tag)) {
           tagCompletionStats[task.tag] = TagCompletion(total: 0, completed: 0);
         }
         tagCompletionStats[task.tag]!.total++;
         
-        // Check if this task is completed (exists in doneTasks)
-        final isCompleted = _doneTasks.any((doneTask) => doneTask.title == task.title);
-        if (isCompleted) {
+        // Check if this task is completed
+        if (task.status == TaskStatus.done) {
           tagCompletionStats[task.tag]!.completed++;
         }
       }
     }
 
     return ProductivityStats(
-      totalTasks: _tasks.length,
-      completedTasks: _doneTasks.length,
+      totalTasks: _allTasks.length,
+      completedTasks: _completedTasks.length,
       skippedTasks: _skippedTasks.length,
       todayCompletionRate: completionRate,
       todayCompleted: completedToday,
@@ -206,8 +175,8 @@ class _ProductivityPageState extends State<ProductivityPage> {
   Map<String, int> _calculatePeakHours() {
     final hourCounts = <int, int>{};
     
-    for (final task in _doneTasks) {
-      final hour = task.completedAt.hour;
+    for (final task in _completedTasks) {
+      final hour = task.createdAt.hour;
       hourCounts[hour] = (hourCounts[hour] ?? 0) + 1;
     }
 
@@ -305,9 +274,8 @@ Focus on the most important improvement area. Be encouraging but honest.
                   const SizedBox(height: 20),
                   _buildTodayProgress(stats),
                   const SizedBox(height: 20),
-                   _buildTagCompletionProgress(stats), // New section
-                   const SizedBox(height: 20),
-                  
+                  _buildTagCompletionProgress(stats),
+                  const SizedBox(height: 20),
                   _buildAISuggestion(aiSuggestion),
                   const SizedBox(height: 20),
                   _buildProductivityInsights(stats),
@@ -316,7 +284,6 @@ Focus on the most important improvement area. Be encouraging but honest.
                   const SizedBox(height: 20),
                   _buildPriorityDistribution(stats),
                   const SizedBox(height: 20),
-                 
                 ],
               ),
             ),
@@ -624,11 +591,9 @@ Focus on the most important improvement area. Be encouraging but honest.
     );
   }
 
-  // NEW SECTION: Tag Completion Progress with Vertical Bars
   Widget _buildTagCompletionProgress(ProductivityStats stats) {
     if (stats.tagCompletionStats.isEmpty) {
       return Card(
-        
         elevation: 2,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: const Padding(
@@ -671,7 +636,6 @@ Focus on the most important improvement area. Be encouraging but honest.
               ),
             ),
             const SizedBox(height: 16),
-            // Use Wrap for responsive layout
             Wrap(
               spacing: 16,
               runSpacing: 16,
@@ -705,7 +669,6 @@ Focus on the most important improvement area. Be encouraging but honest.
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Vertical progress bar container
           Container(
             width: 30,
             height: 120,
@@ -715,7 +678,6 @@ Focus on the most important improvement area. Be encouraging but honest.
             ),
             child: Stack(
               children: [
-                // Progress fill
                 Align(
                   alignment: Alignment.bottomCenter,
                   child: AnimatedContainer(
@@ -732,7 +694,6 @@ Focus on the most important improvement area. Be encouraging but honest.
                     ),
                   ),
                 ),
-                // Percentage text in the middle of the bar
                 Center(
                   child: Text(
                     '${(percentage * 100).toStringAsFixed(0)}%',
@@ -747,7 +708,6 @@ Focus on the most important improvement area. Be encouraging but honest.
             ),
           ),
           const SizedBox(height: 8),
-          // Tag name
           Text(
             tag.isEmpty ? 'No Tag' : tag,
             style: TextStyle(
@@ -760,7 +720,6 @@ Focus on the most important improvement area. Be encouraging but honest.
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 4),
-          // Task count
           Text(
             '$completed/$total',
             style: TextStyle(
@@ -824,7 +783,7 @@ Focus on the most important improvement area. Be encouraging but honest.
 }
 
 // Updated Models
-enum TaskStatus { toStart, onDoing, done }
+enum TaskStatus { toStart, onDoing, done, skipped }
 
 class TaskStats {
   final String id;
@@ -833,7 +792,8 @@ class TaskStats {
   final String tag;
   final int durationMin;
   final DateTime createdAt;
-  final DateTime? completedAt;
+  final DateTime? deadline;
+  final String priority;
 
   TaskStats({
     required this.id,
@@ -842,40 +802,7 @@ class TaskStats {
     required this.tag,
     required this.durationMin,
     required this.createdAt,
-    this.completedAt,
-  });
-}
-
-class DoneTask {
-  final String id;
-  final String title;
-  final int durationMin;
-  final DateTime completedAt;
-  final String priority;
-  final String scheduledStart;
-
-  DoneTask({
-    required this.id,
-    required this.title,
-    required this.durationMin,
-    required this.completedAt,
-    required this.priority,
-    required this.scheduledStart,
-  });
-}
-
-class SkippedTask {
-  final String id;
-  final String title;
-  final int durationMin;
-  final DateTime deletedAt;
-  final String priority;
-
-  SkippedTask({
-    required this.id,
-    required this.title,
-    required this.durationMin,
-    required this.deletedAt,
+    this.deadline,
     required this.priority,
   });
 }

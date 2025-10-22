@@ -27,6 +27,7 @@ class _AddTaskPageState extends State<AddTaskPage> {
   List<String> _userTags = [];
   bool _loadingTags = true;
   bool _saving = false;
+  bool _repeatingTask = false; // NEW: Repeating task flag
 
   @override
   void initState() {
@@ -83,73 +84,186 @@ class _AddTaskPageState extends State<AddTaskPage> {
     }
   }
 
- Future<void> _submit() async {
-  if (_loadingTags || _saving) return;
-  if (_formKey.currentState!.validate()) {
-    setState(() => _saving = true);
+  // NEW: Check for existing tasks with same title
+  Future<bool> _checkForExistingTasks() async {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) return false;
+
+    final snap = await FirebaseFirestore.instance
+        .collection('tasks')
+        .where('uid', isEqualTo: widget.uid)
+        .where('title', isEqualTo: title)
+        .get();
+
+    return snap.docs.isNotEmpty;
+  }
+
+  // NEW: Show repeating task confirmation dialog
+  Future<bool> _showRepeatingTaskDialog() async {
+    final existingCount = await _getExistingTaskCount();
     
-    try {
-      // Create task object
-      final task = Task(
-        title: _titleCtrl.text.trim(),
-        desc: _descCtrl.text.trim(),
-        durationMin: int.parse(_durationCtrl.text.trim()),
-        deadline: _deadline,
-        priority: _priority,
-        uid: widget.uid,
-        status: _status,
-        tag: _selectedTag,
-      );
-
-      // Convert task to map for Firestore manually
-      final taskMap = {
-        'title': task.title,
-        'desc': task.desc,
-        'durationMin': task.durationMin,
-        'deadline': Timestamp.fromDate(task.deadline!),
-        'priority': task.priority.name,
-        'uid': task.uid,
-        'status': task.status.name,
-        'tag': task.tag,
-        'createdAt': FieldValue.serverTimestamp(),
-      };
-
-      // Add to Firestore
-      final docRef = await FirebaseFirestore.instance
-          .collection('tasks')
-          .add(taskMap);
-
-      // Update the task with the generated ID
-      await docRef.update({'id': docRef.id});
-
-      if (mounted) {
-        // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Task created successfully!'),
-            backgroundColor: Colors.green,
+    return await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.repeat, color: Colors.blue[600]),
+            const SizedBox(width: 8),
+            const Text('Repeating Task Found'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'You\'ve created "${_titleCtrl.text.trim()}" $existingCount time(s) before.',
+              style: const TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Is this a repeating task/habit?',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Marking as repeating will help you track habits and show a special indicator.',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('NO, JUST ONCE'),
           ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue[600],
+            ),
+            child: const Text('YES, HABIT'),
+          ),
+        ],
+      ),
+    ) ?? false;
+  }
+
+  // NEW: Get count of existing tasks with same title
+  Future<int> _getExistingTaskCount() async {
+    final snap = await FirebaseFirestore.instance
+        .collection('tasks')
+        .where('uid', isEqualTo: widget.uid)
+        .where('title', isEqualTo: _titleCtrl.text.trim())
+        .get();
+    return snap.docs.length;
+  }
+
+  Future<void> _submit() async {
+    if (_loadingTags || _saving) return;
+    if (_formKey.currentState!.validate()) {
+      setState(() => _saving = true);
+      
+      try {
+        // Check for existing tasks with same title
+        final hasExistingTasks = await _checkForExistingTasks();
+        
+        // If existing tasks found and not already marked as repeating, show dialog
+        if (hasExistingTasks && !_repeatingTask) {
+          final shouldMarkAsRepeating = await _showRepeatingTaskDialog();
+          if (mounted) {
+            setState(() {
+              _repeatingTask = shouldMarkAsRepeating;
+            });
+          }
+        }
+
+        // Create task object with repeatingTask field
+        final task = Task(
+          title: _titleCtrl.text.trim(),
+          desc: _descCtrl.text.trim(),
+          durationMin: int.parse(_durationCtrl.text.trim()),
+          deadline: _deadline,
+          priority: _priority,
+          uid: widget.uid,
+          status: _status,
+          tag: _selectedTag,
+          repeatingTask: _repeatingTask, // NEW: Include repeating task flag
         );
 
-        // Navigate back
-        Navigator.of(context).pop(true);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error creating task: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _saving = false);
+        // Convert task to map for Firestore manually
+        final taskMap = {
+          'title': task.title,
+          'desc': task.desc,
+          'durationMin': task.durationMin,
+          'deadline': Timestamp.fromDate(task.deadline!),
+          'priority': task.priority.name,
+          'uid': task.uid,
+          'status': task.status.name,
+          'tag': task.tag,
+          'createdAt': FieldValue.serverTimestamp(),
+          'repeatingTask': task.repeatingTask, // NEW: Include in Firestore
+        };
+
+        // Add to Firestore
+        final docRef = await FirebaseFirestore.instance
+            .collection('tasks')
+            .add(taskMap);
+
+        // Update the task with the generated ID
+        await docRef.update({'id': docRef.id});
+
+        if (mounted) {
+          // Show success message with repeating task info if applicable
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  Icon(
+                    _repeatingTask ? Icons.repeat : Icons.check,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _repeatingTask 
+                          ? 'Habit task created successfully!'
+                          : 'Task created successfully!',
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+
+          // Navigate back
+          Navigator.of(context).pop(true);
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error creating task: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } finally {
+        if (mounted) {
+          setState(() => _saving = false);
+        }
       }
     }
   }
-}
 
   Future<void> _showAddTagDialog() async {
     return showDialog<void>(
@@ -268,6 +382,57 @@ class _AddTaskPageState extends State<AddTaskPage> {
     );
   }
 
+  // NEW: Build repeating task indicator in the form
+  Widget _buildRepeatingTaskIndicator() {
+    if (!_repeatingTask) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.green[50],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.green[100]!),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.repeat, color: Colors.green[600], size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Repeating Task/Habit',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.green[800],
+                    fontSize: 14,
+                  ),
+                ),
+                Text(
+                  'This task will be marked as a habit',
+                  style: TextStyle(
+                    color: Colors.green[600],
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.close, color: Colors.green[600], size: 18),
+            onPressed: () {
+              setState(() {
+                _repeatingTask = false;
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildFormField({
     required String label,
     required Widget child,
@@ -345,6 +510,9 @@ class _AddTaskPageState extends State<AddTaskPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Repeating Task Indicator
+              _buildRepeatingTaskIndicator(),
+
               // Title Field
               _buildFormField(
                 label: 'Task Title *',

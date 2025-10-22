@@ -3,7 +3,8 @@ import 'package:firebase_ai/firebase_ai.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:taskhaura/models/task.dart';
-import '../main.dart'; // gemini instance
+import 'package:voice_to_text/voice_to_text.dart';
+import '../main.dart';
 
 class AITaskCreationPage extends StatefulWidget {
   final String? userTags;
@@ -33,22 +34,39 @@ class _AITaskCreationPageState extends State<AITaskCreationPage> {
   Map<int, DateTime> _taskDeadlines = {};
   Map<int, String> _taskTags = {};
 
-  // New input fields
+  // Input fields
   Priority _selectedPriority = Priority.medium;
   DateTime? _selectedDueDate;
   bool _showInputOptions = false;
+
+  // Voice to text
+  final VoiceToText _speech = VoiceToText();
+  String _recognizedText = '';
 
   @override
   void initState() {
     super.initState();
     _addWelcomeMessage();
     _loadUserTags();
+    _initSpeech();
+  }
+
+  void _initSpeech() {
+    _speech.initSpeech();
+    _speech.addListener(() {
+      setState(() {
+        _recognizedText = _speech.speechResult;
+        if (_recognizedText.isNotEmpty) {
+          _controller.text = _recognizedText;
+        }
+      });
+    });
   }
 
   void _addWelcomeMessage() {
     _conversation.add({
       'role': 'assistant',
-      'text': "Let's create a task together! Describe what you need to do, set priority and due date, and I'll help you break it down into manageable tasks.",
+      'text': "Let's create a task together! Describe what you need to do, set priority and due date, and I'll help you break it down into manageable tasks. You can type or use the microphone to speak your task.",
     });
   }
 
@@ -69,6 +87,44 @@ class _AITaskCreationPageState extends State<AITaskCreationPage> {
     }
   }
 
+  void _startListening() {
+    if (!_speech.speechEnabled) {
+      _showError('Speech recognition is not available on this device');
+      return;
+    }
+
+    _speech.startListening();
+  }
+
+  void _stopListening() {
+    _speech.stop();
+    // Auto-send if we have text
+    if (_recognizedText.trim().isNotEmpty) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (_controller.text.trim().isNotEmpty && mounted) {
+          _sendMessage();
+        }
+      });
+    }
+  }
+
+  void _toggleListening() {
+    if (_speech.isListening) {
+      _stopListening();
+    } else {
+      _startListening();
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+
   Future<void> _sendMessage() async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
@@ -78,6 +134,7 @@ class _AITaskCreationPageState extends State<AITaskCreationPage> {
     setState(() {
       _thinking = true;
       _showInputOptions = false;
+      _recognizedText = '';
     });
 
     try {
@@ -87,13 +144,10 @@ class _AITaskCreationPageState extends State<AITaskCreationPage> {
 
       _parseTasksFromAIResponse(aiResponse);
       
-      // Extract the motivational/explanation text (everything before the task format markers)
       String motivationalText = _extractMotivationalText(aiResponse);
       
-      // Add AI motivational message first
       _addMessage('assistant', motivationalText);
       
-      // If tasks were generated, add them as interactive task blocks to the chat
       if (_generatedTasks.isNotEmpty) {
         _addTaskBlocksToChat();
       }
@@ -106,7 +160,6 @@ class _AITaskCreationPageState extends State<AITaskCreationPage> {
   }
 
   String _extractMotivationalText(String aiResponse) {
-    // Find the first occurrence of task format markers and extract text before them
     final singleTaskIndex = aiResponse.indexOf('SINGLE_TASK');
     final multipleTasksIndex = aiResponse.indexOf('MULTIPLE_TASKS');
     
@@ -121,31 +174,30 @@ class _AITaskCreationPageState extends State<AITaskCreationPage> {
       return aiResponse.substring(0, taskStartIndex).trim();
     }
     
-    // If no task markers found, return the entire response
     return aiResponse;
   }
 
- String _buildTaskCreationPrompt(String userInput) {
-  final now = DateTime.now();
-  final daysUntilDue = _selectedDueDate != null 
-      ? _selectedDueDate!.difference(now).inDays 
-      : 7; // Default to 7 days if no due date
-  
-  String dueDateContext = '';
-  if (_selectedDueDate != null) {
-    final formattedDate = DateFormat('MMMM d, yyyy').format(_selectedDueDate!);
-    if (daysUntilDue <= 1) {
-      dueDateContext = 'URGENT: Due tomorrow or today! Need to complete quickly.';
-    } else if (daysUntilDue <= 3) {
-      dueDateContext = 'Due in $daysUntilDue days - relatively soon, need efficient planning.';
-    } else if (daysUntilDue <= 7) {
-      dueDateContext = 'Due in $daysUntilDue days - good timeframe for balanced task breakdown.';
-    } else {
-      dueDateContext = 'Due in $daysUntilDue days - plenty of time for gradual progress.';
+  String _buildTaskCreationPrompt(String userInput) {
+    final now = DateTime.now();
+    final daysUntilDue = _selectedDueDate != null 
+        ? _selectedDueDate!.difference(now).inDays 
+        : 7;
+    
+    String dueDateContext = '';
+    if (_selectedDueDate != null) {
+      final formattedDate = DateFormat('MMMM d, yyyy').format(_selectedDueDate!);
+      if (daysUntilDue <= 1) {
+        dueDateContext = 'URGENT: Due tomorrow or today! Need to complete quickly.';
+      } else if (daysUntilDue <= 3) {
+        dueDateContext = 'Due in $daysUntilDue days - relatively soon, need efficient planning.';
+      } else if (daysUntilDue <= 7) {
+        dueDateContext = 'Due in $daysUntilDue days - good timeframe for balanced task breakdown.';
+      } else {
+        dueDateContext = 'Due in $daysUntilDue days - plenty of time for gradual progress.';
+      }
     }
-  }
 
-  return '''
+    return '''
 You are a task creation assistant. The user wants to create a task: "$userInput"
 
 Priority: ${_selectedPriority.name.toUpperCase()}
@@ -189,7 +241,7 @@ User context:
 - Tags: ${widget.userTags ?? 'Not specified'}
 - Hours: ${widget.workingHours ?? '9-5'}
 ''';
-}
+  }
 
   void _parseTasksFromAIResponse(String response) {
     _generatedTasks.clear();
@@ -304,13 +356,12 @@ User context:
     });
   }
 
-  // New method to add task blocks to chat
   void _addTaskBlocksToChat() {
     setState(() {
       _conversation.add({
         'role': 'assistant',
         'type': 'task_blocks',
-        'tasks': List<Task>.from(_generatedTasks), // Create a copy
+        'tasks': List<Task>.from(_generatedTasks),
       });
     });
   }
@@ -318,7 +369,6 @@ User context:
   Future<void> _confirmTasks() async {
     if (_loadingTags) return;
 
-    // Show confirmation dialog with tag and deadline selection
     final shouldProceed = await _showFinalConfirmationDialog();
     if (shouldProceed ?? false) {
       await _saveTasksToFirestore();
@@ -327,7 +377,6 @@ User context:
   }
 
   Future<bool?> _showFinalConfirmationDialog() {
-    // Set default values
     DateTime selectedDeadline = _selectedDueDate ?? DateTime.now().add(const Duration(days: 1));
     String selectedTag = '';
 
@@ -343,7 +392,6 @@ User context:
                 child: ListView(
                   shrinkWrap: true,
                   children: [
-                    // Task list preview
                     ..._generatedTasks.asMap().entries.map((entry) {
                       final task = entry.value;
                       return Card(
@@ -360,7 +408,6 @@ User context:
                     }),
                     const SizedBox(height: 16),
                     
-                    // Single tag selection for all tasks
                     const Text('Tag for all tasks:', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     _buildTagChips(selectedTag, (tag) {
@@ -368,7 +415,6 @@ User context:
                     }),
                     const SizedBox(height: 16),
                     
-                    // Single deadline selection for all tasks
                     const Text('Due date for all tasks:', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     ListTile(
@@ -397,7 +443,6 @@ User context:
                 ),
                 ElevatedButton(
                   onPressed: () {
-                    // Apply the same tag and deadline to all tasks
                     for (int i = 0; i < _generatedTasks.length; i++) {
                       _taskTags[i] = selectedTag;
                       _taskDeadlines[i] = selectedDeadline;
@@ -449,7 +494,6 @@ User context:
     for (int i = 0; i < _generatedTasks.length; i++) {
       final task = _generatedTasks[i];
       
-      // Update task with final details
       final finalTask = Task(
         id: task.id,
         title: task.title,
@@ -463,7 +507,6 @@ User context:
         createdAt: task.createdAt,
       );
 
-      // Add to Firestore
       final taskRef = FirebaseFirestore.instance
           .collection('tasks')
           .doc(finalTask.id);
@@ -474,14 +517,12 @@ User context:
     await batch.commit();
   }
 
-  // Method to build task blocks
   Widget _buildTaskBlocks(List<Task> tasks) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Updated header to be more encouraging
           Padding(
             padding: const EdgeInsets.only(bottom: 8, left: 8),
             child: Text(
@@ -491,7 +532,6 @@ User context:
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
             ),
           ),
-          // Task cards
           ...tasks.asMap().entries.map((entry) {
             final index = entry.key;
             final task = entry.value;
@@ -530,7 +570,6 @@ User context:
               ),
             );
           }),
-          // Action buttons
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Row(
@@ -559,7 +598,6 @@ User context:
     );
   }
 
-  // Helper methods for priority icons and colors
   IconData _getPriorityIcon(Priority priority) {
     switch (priority) {
       case Priority.high:
@@ -582,7 +620,6 @@ User context:
     }
   }
 
-  // Update the edit task method to work within chat
   void _editTaskInChat(int taskIndex, Task task) {
     final titleController = TextEditingController(text: task.title);
     final durationController = TextEditingController(text: task.durationMin.toString());
@@ -624,8 +661,6 @@ User context:
                     newTitle, 
                     newDuration
                   );
-                  
-                  // Update the task blocks in chat
                   _updateTaskBlocksInChat();
                 });
               }
@@ -638,9 +673,7 @@ User context:
     );
   }
 
-  // Method to update task blocks in chat
   void _updateTaskBlocksInChat() {
-    // Find the task blocks message and update it
     for (int i = 0; i < _conversation.length; i++) {
       if (_conversation[i]['type'] == 'task_blocks') {
         setState(() {
@@ -651,9 +684,7 @@ User context:
     }
   }
 
-  // Method to edit all tasks (go back to chat input)
   void _editAllTasks() {
-    // Remove the task blocks from chat and go back to input mode
     setState(() {
       _conversation.removeWhere((msg) => msg['type'] == 'task_blocks');
     });
@@ -674,7 +705,6 @@ User context:
     );
   }
 
-  // Build message bubble that handles both text and task blocks
   Widget _buildMessageBubble(Map<String, dynamic> message) {
     final role = message['role'];
     final text = message['text'];
@@ -682,12 +712,10 @@ User context:
     final tasks = message['tasks'];
     final isUser = role == 'user';
     
-    // If this is a task blocks message, render the task cards
     if (type == 'task_blocks' && tasks != null) {
       return _buildTaskBlocks(tasks);
     }
     
-    // Regular text message
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -732,19 +760,16 @@ User context:
     );
   }
 
-  // Enhanced input section with priority and due date options
   Widget _inputSection() {
     return SafeArea(
       child: Column(
         children: [
-          // Priority and Due Date Options
           if (_showInputOptions) ...[
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               color: Colors.grey[50],
               child: Column(
                 children: [
-                  // Priority Selection
                   Row(
                     children: [
                       const Text('Priority:', style: TextStyle(fontWeight: FontWeight.w500)),
@@ -772,7 +797,6 @@ User context:
                     ],
                   ),
                   const SizedBox(height: 12),
-                  // Due Date Selection
                   Row(
                     children: [
                       const Text('Due Date:', style: TextStyle(fontWeight: FontWeight.w500)),
@@ -814,12 +838,10 @@ User context:
             ),
             const Divider(height: 1),
           ],
-          // Input Bar
           Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                // Options Toggle Button
                 IconButton(
                   icon: Icon(
                     _showInputOptions ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
@@ -828,25 +850,67 @@ User context:
                   onPressed: () => setState(() => _showInputOptions = !_showInputOptions),
                 ),
                 const SizedBox(width: 4),
-                // Text Input
                 Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    decoration: InputDecoration(
-                      hintText: 'Describe your task...',
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none,
+                  child: Stack(
+                    children: [
+                      TextField(
+                        controller: _controller,
+                        decoration: InputDecoration(
+                          hintText: _speech.isListening ? "Listening...." : 'Describe your task...',
+                          filled: true,
+                          fillColor: _speech.isListening ? Colors.blue.shade50 : Colors.white,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(24),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        ),
+                        onSubmitted: (_) => _sendMessage(),
                       ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                    ),
-                    onSubmitted: (_) => _sendMessage(),
+                      if (_speech.isListening)
+                        Positioned(
+                          right: 8,
+                          top: 0,
+                          bottom: 0,
+                          child: Icon(
+                            Icons.record_voice_over,
+                            color: Colors.red,
+                            size: 20,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 8),
-                // Send Button
+                _speech.speechEnabled
+                    ? AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        child: _speech.isListening 
+                            ? FloatingActionButton(
+                                mini: true,
+                                backgroundColor: Colors.red,
+                                onPressed: _toggleListening,
+                                child: const Icon(Icons.mic, color: Colors.white),
+                              )
+                            : FloatingActionButton(
+                                mini: true,
+                                backgroundColor: const Color(0xFF74EC7A),
+                                onPressed: _toggleListening,
+                                child: const Icon(Icons.mic_none, color: Colors.white),
+                              ),
+                      )
+                    : IconButton(
+                        icon: const Icon(Icons.mic_off, color: Colors.grey),
+                        onPressed: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Speech recognition is not available'),
+                              backgroundColor: Colors.orange,
+                            ),
+                          );
+                        },
+                      ),
+                const SizedBox(width: 8),
                 FloatingActionButton(
                   mini: true,
                   backgroundColor: const Color(0xFF74EC7A),
