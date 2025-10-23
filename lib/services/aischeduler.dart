@@ -15,7 +15,7 @@ class AiScheduler {
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(uid)
-          .get();
+          .get(); //d
       
       if (userDoc.exists) {
         final data = userDoc.data();
