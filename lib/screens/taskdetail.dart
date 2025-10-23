@@ -753,7 +753,7 @@ Future<void> _addToGoogleCalendar() async {
                 Expanded(
                   child: _ActionButton(
                     icon: Icons.smart_toy,
-                    label: 'AI Assistant',
+                    label: 'AI Schedule',
                     color: const Color(0xFF74EC7A),
                     onTap: _isUpdating ? null : _openAiChat,
                   ),

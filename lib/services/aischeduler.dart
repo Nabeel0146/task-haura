@@ -136,6 +136,18 @@ static Future<List<String>?> _getTaskTags(String taskId, String uid) async {
     };
   }
 
+  static Set<String> _getBlockedHours(List<dynamic> orderedTasks) {
+  final blocked = <String>{};
+  for (final task in orderedTasks) {
+    final start = task['start'] as String?; // "HH:mm"
+    if (start != null && start.contains(':')) {
+      final hour = start.split(':').first.padLeft(2, '0');
+      blocked.add(hour);
+    }
+  }
+  return blocked;
+}
+
   static String _to24Hour(String hour, String period) {
     int h = int.parse(hour);
     if (period == 'PM' && h != 12) h += 12;
