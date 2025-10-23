@@ -33,52 +33,39 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     _currentTask = widget.task;
     _checkAndUpdateOverdueStatus();
   }
+/* --------------------------------------------------------------- */
+/*  Add to Google Calendar Functionality                           */
+/* --------------------------------------------------------------- */
+Future<void> _addToGoogleCalendar() async {
+  if (_isAddingToCalendar) return;
+  
+  setState(() {
+    _isAddingToCalendar = true;
+  });
 
-  /* --------------------------------------------------------------- */
-  /*  Add to Google Calendar Functionality                           */
-  /* --------------------------------------------------------------- */
-  Future<void> _addToGoogleCalendar() async {
-    if (_isAddingToCalendar) return;
-    
-    setState(() {
-      _isAddingToCalendar = true;
-    });
-
-    try {
-      final success = await _calendarService.addTaskToCalendar(_currentTask);
-      
-      if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Opening Google Calendar...'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to open Google Calendar'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
+  try {
+    if (!await _calendarService.addTaskToCalendar(_currentTask)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 2),
+        const SnackBar(
+          content: Text('Could not open Google Calendar'),
+          duration: Duration(seconds: 2),
         ),
       );
-    } finally {
-      setState(() {
-        _isAddingToCalendar = false;
-      });
     }
+  } catch (e) {
+    print('Calendar error: $e');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Error opening Google Calendar'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  } finally {
+    setState(() {
+      _isAddingToCalendar = false;
+    });
   }
-
+}
   /* --------------------------------------------------------------- */
   /*  Update Task in Firebase                                        */
   /* --------------------------------------------------------------- */

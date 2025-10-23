@@ -1,98 +1,71 @@
-import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:taskhaura/models/task.dart';
+import 'package:intl/intl.dart';
+import 'dart:io' show Platform;
 
 class DeepLinkCalendarService {
+  
   Future<bool> addTaskToCalendar(Task task) async {
     try {
-      // Method 1: Try Google Calendar deep link first
-      bool success = await _tryGoogleCalendarDeepLink(task);
-      if (success) return true;
-
-      // Method 2: If Google Calendar fails, try generic calendar app
-      success = await _tryGenericCalendarApp(task);
-      if (success) return true;
-
-      // Method 3: If all else fails, show manual instructions
-      return await _showManualInstructions(task);
-      
-    } catch (e) {
-      print('Error creating calendar event: $e');
-      return false;
-    }
-  }
-
-  Future<bool> _tryGoogleCalendarDeepLink(Task task) async {
-    try {
       final startTime = task.deadline;
-      final endTime = startTime!.add(Duration(minutes: task.durationMin));
+      final endTime = startTime?.add(Duration(minutes: task.durationMin));
       
       // Format dates for Google Calendar
       final String start = _formatDateTimeForCalendar(startTime!);
-      final String end = _formatDateTimeForCalendar(endTime);
+      final String end = _formatDateTimeForCalendar(endTime!);
       
-      // Create Google Calendar deep link
+      // Create Google Calendar URL - use the simpler format that works
       final String url = 
           'https://calendar.google.com/calendar/render?'
           'action=TEMPLATE'
           '&text=${Uri.encodeComponent(task.title)}'
           '&details=${Uri.encodeComponent(_getDescription(task))}'
-          '&dates=$start/$end'
-          '&sf=true'
-          '&output=xml';
+          '&dates=$start/$end';
 
-      print('Attempting to launch: $url');
+      print('Opening Google Calendar URL: $url');
       
-      // Launch the URL
-      if (await canLaunchUrl(Uri.parse(url))) {
-        final result = await launchUrl(
-          Uri.parse(url),
-          mode: LaunchMode.externalApplication,
-        );
-        print('Launch result: $result');
-        return result;
-      } else {
-        print('Cannot launch Google Calendar URL');
+      // For emulator, use external application mode
+      final LaunchMode launchMode = _isLikelyEmulator() ? 
+          LaunchMode.externalApplication : 
+          LaunchMode.platformDefault;
+      
+      final result = await launchUrl(
+        Uri.parse(url),
+        mode: launchMode,
+      );
+      
+      if (!result) {
+        print('Could not launch $url');
         return false;
       }
+      return true;
+      
     } catch (e) {
-      print('Google Calendar deep link failed: $e');
+      print('Error occurred: $e');
       return false;
     }
   }
 
-  Future<bool> _tryGenericCalendarApp(Task task) async {
-    try {
-      final startTime = task.deadline;
-      final endTime = startTime!.add(Duration(minutes: task.durationMin));
-      
-      // Try generic calendar URL (works on iOS and some Android devices)
-      final String url = 
-          'https://calendar.google.com/calendar/r/eventedit?'
-          'text=${Uri.encodeComponent(task.title)}'
-          '&details=${Uri.encodeComponent(_getDescription(task))}'
-          '&dates=${_formatDateTimeForCalendar(startTime!)}/${_formatDateTimeForCalendar(endTime)}';
-
-      print('Attempting generic calendar: $url');
-      
-      if (await canLaunchUrl(Uri.parse(url))) {
-        final result = await launchUrl(
-          Uri.parse(url),
-          mode: LaunchMode.externalApplication,
-        );
-        return result;
-      }
-      return false;
-    } catch (e) {
-      print('Generic calendar failed: $e');
-      return false;
-    }
+  // Check if we're likely running on an emulator
+  bool _isLikelyEmulator() {
+    // Simple check - emulators often have issues with platform default mode
+    // So we force external application mode for better compatibility
+    return Platform.isAndroid && 
+           (Platform.environment['ANDROID_EMULATOR'] != null ||
+            Platform.environment['QEMU'] != null ||
+            _isProbablyEmulator());
   }
 
-  Future<bool> _showManualInstructions(Task task) async {
-    // This will show a dialog with manual instructions
-    // Return true to indicate we've handled the situation
-    return true;
+  bool _isProbablyEmulator() {
+    // Additional checks for emulator
+    final model = Platform.environment['MODEL'] ?? '';
+    final brand = Platform.environment['BRAND'] ?? '';
+    final hardware = Platform.environment['HARDWARE'] ?? '';
+    
+    return model.contains('sdk') || 
+           model.contains('Emulator') ||
+           brand.contains('generic') ||
+           hardware.contains('goldfish');
   }
 
   String _getDescription(Task task) {
@@ -116,30 +89,13 @@ class DeepLinkCalendarService {
   }
 
   String _formatDateTimeForCalendar(DateTime date) {
-    // Format: YYYYMMDDTHHMMSSZ (UTC time)
     final year = date.year.toString();
     final month = date.month.toString().padLeft(2, '0');
     final day = date.day.toString().padLeft(2, '0');
     final hour = date.hour.toString().padLeft(2, '0');
     final minute = date.minute.toString().padLeft(2, '0');
-    final second = date.second.toString().padLeft(2, '0');
+    final second = '00';
     
     return '${year}${month}${day}T${hour}${minute}${second}Z';
-  }
-
-  // Alternative method for manual event creation
-  String getManualEventDetails(Task task) {
-    final startTime = task.deadline;
-    final endTime = startTime!.add(Duration(minutes: task.durationMin));
-    
-    return '''
-Title: ${task.title}
-Description: ${_getDescription(task)}
-Start: ${DateFormat('yyyy-MM-dd HH:mm').format(startTime)}
-End: ${DateFormat('yyyy-MM-dd HH:mm').format(endTime)}
-Duration: ${task.durationMin} minutes
-Priority: ${task.priority.name.toUpperCase()}
-Tag: ${task.tag}
-''';
   }
 }

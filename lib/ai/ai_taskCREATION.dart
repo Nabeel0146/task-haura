@@ -760,6 +760,39 @@ User context:
     );
   }
 
+  Widget _buildMicButton() {
+    if (!_speech.speechEnabled) {
+      return IconButton(
+        icon: const Icon(Icons.mic_off, color: Colors.grey),
+        onPressed: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Speech recognition is not available on this device'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        },
+      );
+    }
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      child: _speech.isListening 
+          ? FloatingActionButton(
+              mini: true,
+              backgroundColor: Colors.red,
+              onPressed: _toggleListening,
+              child: const Icon(Icons.mic, color: Colors.white),
+            )
+          : FloatingActionButton(
+              mini: true,
+              backgroundColor: const Color(0xFF74EC7A),
+              onPressed: _toggleListening,
+              child: const Icon(Icons.mic_none, color: Colors.white),
+            ),
+    );
+  }
+
   Widget _inputSection() {
     return SafeArea(
       child: Column(
@@ -856,7 +889,7 @@ User context:
                       TextField(
                         controller: _controller,
                         decoration: InputDecoration(
-                          hintText: _speech.isListening ? "Listening...." : 'Describe your task...',
+                          hintText: _speech.isListening ? "Listening..." : 'Describe your task...',
                           filled: true,
                           fillColor: _speech.isListening ? Colors.blue.shade50 : Colors.white,
                           border: OutlineInputBorder(
@@ -882,34 +915,7 @@ User context:
                   ),
                 ),
                 const SizedBox(width: 8),
-                _speech.speechEnabled
-                    ? AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        child: _speech.isListening 
-                            ? FloatingActionButton(
-                                mini: true,
-                                backgroundColor: Colors.red,
-                                onPressed: _toggleListening,
-                                child: const Icon(Icons.mic, color: Colors.white),
-                              )
-                            : FloatingActionButton(
-                                mini: true,
-                                backgroundColor: const Color(0xFF74EC7A),
-                                onPressed: _toggleListening,
-                                child: const Icon(Icons.mic_none, color: Colors.white),
-                              ),
-                      )
-                    : IconButton(
-                        icon: const Icon(Icons.mic_off, color: Colors.grey),
-                        onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Speech recognition is not available'),
-                              backgroundColor: Colors.orange,
-                            ),
-                          );
-                        },
-                      ),
+                _buildMicButton(),
                 const SizedBox(width: 8),
                 FloatingActionButton(
                   mini: true,
@@ -923,6 +929,15 @@ User context:
         ],
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    if (_speech.isListening) {
+      _speech.stop();
+    }
+    _controller.dispose();
+    super.dispose();
   }
 
   @override
