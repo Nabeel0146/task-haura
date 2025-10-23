@@ -3,10 +3,12 @@ import 'package:intl/intl.dart';
 import 'package:taskhaura/models/task.dart';
 import 'package:taskhaura/ai/ai_chatscreen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:taskhaura/services/calendar_deeplink.dart';
+
 
 class TaskDetailScreen extends StatefulWidget {
   final Task task;
-  final VoidCallback? onTaskUpdated; // Callback to refresh parent
+  final VoidCallback? onTaskUpdated;
 
   const TaskDetailScreen({
     super.key,
@@ -21,13 +23,60 @@ class TaskDetailScreen extends StatefulWidget {
 class _TaskDetailScreenState extends State<TaskDetailScreen> {
   late Task _currentTask;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final DeepLinkCalendarService _calendarService = DeepLinkCalendarService();
   bool _isUpdating = false;
+  bool _isAddingToCalendar = false;
 
   @override
   void initState() {
     super.initState();
     _currentTask = widget.task;
     _checkAndUpdateOverdueStatus();
+  }
+
+  /* --------------------------------------------------------------- */
+  /*  Add to Google Calendar Functionality                           */
+  /* --------------------------------------------------------------- */
+  Future<void> _addToGoogleCalendar() async {
+    if (_isAddingToCalendar) return;
+    
+    setState(() {
+      _isAddingToCalendar = true;
+    });
+
+    try {
+      final success = await _calendarService.addTaskToCalendar(_currentTask);
+      
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Opening Google Calendar...'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to open Google Calendar'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } finally {
+      setState(() {
+        _isAddingToCalendar = false;
+      });
+    }
   }
 
   /* --------------------------------------------------------------- */
@@ -46,18 +95,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           .doc(updatedTask.id)
           .update({'status': updatedTask.status.name});
 
-      // Update local state
       setState(() {
         _currentTask = updatedTask;
       });
 
-      // Notify parent if callback provided
       widget.onTaskUpdated?.call();
 
-      // Show success message
       _showStatusUpdateSnackbar(updatedTask.status);
     } catch (e) {
-      // Show error message
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to update task: $e'),
@@ -97,14 +142,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         newStatus = TaskStatus.done;
         break;
       case TaskStatus.done:
-        // If already done, no change
         return;
       case TaskStatus.skipped:
         newStatus = TaskStatus.toStart;
         break;
     }
 
-    // Update in Firebase
     _updateTaskInFirebase(_currentTask.copyWith(status: newStatus));
   }
 
@@ -154,7 +197,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /*  Edit Task Functionality                                        */
   /* --------------------------------------------------------------- */
   void _handleEdit() {
-    // TODO: Implement edit functionality
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Edit functionality coming soon!'),
@@ -202,7 +244,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         ),
       );
       
-      // Navigate back after deletion
       Future.delayed(const Duration(milliseconds: 500), () {
         Navigator.of(context).pop();
       });
@@ -217,28 +258,27 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     }
   }
 
-  // ... (Keep all the existing UI methods: _tagColors, _priorityChip, _statusChip, etc.)
   /* --------------------------------------------------------------- */
   /*  TAG COLOR MAPPING                                              */
   /* --------------------------------------------------------------- */
   Map<String, Color> get _tagColors => const {
-    'Work': Color(0xFFFFF2E6),        // Soft orange
-    'Study': Color(0xFFE6F3FF),       // Soft blue
-    'Freelancing': Color(0xFFF0E6FF), // Soft purple
-    'Kitchen': Color(0xFFFFF0F0),     // Soft pink
-    'Parenting': Color(0xFFE6FFE6),   // Soft green
-    'Family': Color(0xFFFFF8E6),      // Soft peach
-    'Personal': Color(0xFFE6F7FF),    // Soft light blue
+    'Work': Color(0xFFFFF2E6),
+    'Study': Color(0xFFE6F3FF),
+    'Freelancing': Color(0xFFF0E6FF),
+    'Kitchen': Color(0xFFFFF0F0),
+    'Parenting': Color(0xFFE6FFE6),
+    'Family': Color(0xFFFFF8E6),
+    'Personal': Color(0xFFE6F7FF),
   };
 
   Map<String, Color> get _tagTextColors => const {
-    'Work': Color(0xFFCC6600),        // Dark orange
-    'Study': Color(0xFF0066CC),       // Dark blue
-    'Freelancing': Color(0xFF6633CC), // Dark purple
-    'Kitchen': Color(0xFFCC3366),     // Dark pink
-    'Parenting': Color(0xFF339933),   // Dark green
-    'Family': Color(0xFFCC9900),      // Dark peach
-    'Personal': Color(0xFF0099CC),    // Dark light blue
+    'Work': Color(0xFFCC6600),
+    'Study': Color(0xFF0066CC),
+    'Freelancing': Color(0xFF6633CC),
+    'Kitchen': Color(0xFFCC3366),
+    'Parenting': Color(0xFF339933),
+    'Family': Color(0xFFCC9900),
+    'Personal': Color(0xFF0099CC),
   };
 
   /* --------------------------------------------------------------- */
@@ -638,7 +678,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
             if (_canUpdateStatus) const SizedBox(height: 20),
 
-            // ... (Keep the rest of your existing UI code)
             /* ----------------------------------------------------- */
             /*  TASK INFORMATION CARDS                               */
             /* ----------------------------------------------------- */
@@ -657,7 +696,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 _infoCard(
                   Icons.calendar_today,
                   'Deadline',
-                  DateFormat('MMM d, yyyy').format(_currentTask.deadline ?? DateTime.now()),
+                  DateFormat('MMM d, yyyy - h:mm a').format(_currentTask.deadline ?? DateTime.now()),
                   iconColor: _isOverdue ? Colors.red : Colors.blue,
                 ),
                 const SizedBox(height: 12),
@@ -720,7 +759,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             const SizedBox(height: 20),
 
             /* ----------------------------------------------------- */
-            /*  ACTION BUTTONS                                       */
+            /*  ACTION BUTTONS - UPDATED WITH CALENDAR              */
             /* ----------------------------------------------------- */
             Row(
               children: [
@@ -735,6 +774,21 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: _ActionButton(
+                    icon: Icons.calendar_today,
+                    label: _isAddingToCalendar ? 'Adding...' : 'Add to Calendar',
+                    color: Colors.purple,
+                    onTap: _isUpdating || _isAddingToCalendar ? null : _addToGoogleCalendar,
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: _ActionButton(
                     icon: Icons.edit,
                     label: 'Edit',
                     color: Colors.blue,
@@ -747,7 +801,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     icon: Icons.delete,
                     label: 'Delete',
                     color: Colors.red,
-                    onTap: _isUpdating ? null : () => _handleDelete(),
+                    onTap: _isUpdating ? null : _handleDelete,
                   ),
                 ),
               ],
@@ -856,6 +910,7 @@ class _ActionButton extends StatelessWidget {
                 color: color.withOpacity(onTap == null ? 0.3 : 1.0),
                 fontWeight: FontWeight.w600,
               ),
+              textAlign: TextAlign.center,
             ),
           ],
         ),
